@@ -9,4 +9,17 @@ dependencies = [
     "llvmlite>=0.43",
     "numba>=0.60",
     "shap>=0.46",
+    "pyspark>=3.5",
+    "pydantic>=2.7",
+    "pydantic-settings[yaml]>=2.2",
+    "plotly>=5.22",
+]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.2",
+    "chispa>=0.10",
+    "nbclient>=0.11.0",
+    "nbformat>=5.10.4",
+    "ipykernel>=7.3.0",
 ]

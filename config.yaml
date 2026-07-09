@@ -1,0 +1,24 @@
+# Config do pipeline de dados & EDA (REQ-110).
+# Todo parâmetro de comportamento do pipeline vive aqui — nada hardcoded em src/.
+
+raw_dir: data/raw
+processed_dir: data/processed
+
+offers_filename: offers.json
+profile_filename: profile.json
+transactions_filename: transactions.json
+
+age_sentinel: 118
+test_start_date: "20180726" # t=0 do teste; proxy = max(registered_on) observado no profile
+
+smd_threshold: 0.1
+attribution_priority: earliest_received # earliest_received | latest_received
+
+campaign_wave_days: 5.0
+n_campaign_waves: 6
+
+seed: 42
+
+# Nota: reward_cost (REQ-106) usa o discount_value do próprio catálogo de
+# ofertas, não uma tabela de custo por tipo — logo não há parâmetro de custo
+# aqui. Se o custo passar a divergir do discount_value, adicione-o nesta config.

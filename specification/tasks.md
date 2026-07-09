@@ -6,7 +6,7 @@
 ---
 
 ## T-101 — Config tipada
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-110
 - **Depends on:** —
 - **Files:** `src/config.py`, `tests/test_config.py`
@@ -15,7 +15,7 @@
 - **Accept:** T-config passa — config com limiar negativo ou janela ≤ 0 levanta erro na carga.
 
 ## T-102 — Leitura e parsing de `value`
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-101
 - **Depends on:** T-101
 - **Files:** `src/io.py`, `tests/test_parsing.py`
@@ -25,7 +25,7 @@
   transaction tem `amount` e sem referência.
 
 ## T-103 — Normalização de perfil
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-102
 - **Depends on:** T-101
 - **Files:** `src/clean.py`, `tests/test_profile.py`
@@ -34,7 +34,7 @@
 - **Accept:** T-G7 passa — exatamente os sentinela recebem a flag e `age` null.
 
 ## T-104 — Atribuição temporal
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-103
 - **Depends on:** T-102
 - **Files:** `src/attribution.py`, `tests/test_attribution.py`
@@ -43,7 +43,7 @@
 - **Accept:** transação fora de janela não é atribuída; sobreposição usa a regra da config.
 
 ## T-105 — Label influence-aware
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-104
 - **Depends on:** T-104
 - **Files:** `src/attribution.py`, `tests/test_label.py`
@@ -52,7 +52,7 @@
 - **Accept:** T-G3, T-G4, T-G5 passam.
 
 ## T-106 — Features anti-leakage
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-105
 - **Depends on:** T-104
 - **Files:** `src/features.py`, `tests/test_leakage.py`
@@ -61,7 +61,7 @@
 - **Accept:** T-G2 passa — evento pós-recebimento não entra em nenhuma feature.
 
 ## T-107 — Custo do desconto
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-106
 - **Depends on:** T-105
 - **Files:** `src/cost.py`, `tests/test_cost.py`

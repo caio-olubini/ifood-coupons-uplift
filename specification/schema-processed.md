@@ -30,8 +30,8 @@ expôs o cliente ao estímulo — é controle para fins de uplift.
 ### Label
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `converted` | int | 1 se conversão influence-aware (Premissa 2), senão 0 |
-| `conversion_value` | double | valor da(s) transação(ões) atribuída(s); 0 se não converteu |
+| `converted` | int | 1 se conversão influence-aware (Premissa 2): vista E transação **após o view** dentro da validade; senão 0 |
+| `conversion_value` | double | soma das transações atribuídas (pós-view, na validade); 0 se não converteu |
 | `reward_cost` | double | custo do desconto concedido (0 para informational e não-convertidos) |
 
 ### Features de cliente (do profile, tratando nulos)
@@ -87,8 +87,11 @@ da suíte de testes do pipeline.
   `time > received_time` da própria linha.
 - **G3 — Label exige view.** `converted=1` ⇒ existe `offer viewed` com
   `view_time ≥ received_time` e `view_time ≤ received_time + duration`.
-- **G4 — Label dentro da validade.** `converted=1` ⇒ transação atribuída ocorre em
-  `[received_time, received_time + duration]`.
+- **G4 — Conversão é pós-view e dentro da validade (influence-aware estrito).**
+  `converted=1` ⇒ a transação atribuída ocorre em `[view_time, received_time + duration]`,
+  isto é, **depois do view** e dentro da validade. Uma compra na janela mas
+  anterior ao view não pode ter sido induzida pela visualização, logo não conta
+  como conversão nem entra em `conversion_value`.
 - **G5 — Informational sem completed.** Conversão de informational vem de transação em
   janela pós-view, nunca de evento `offer completed` (que não existe para esse tipo).
 - **G6 — Custo coerente.** `reward_cost > 0` ⇒ `converted=1` e `offer_type ≠ informational`.
