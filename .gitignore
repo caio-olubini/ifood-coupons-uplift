@@ -8,3 +8,6 @@ wheels/
 
 # Virtual environments
 .venv
+
+# Dataset processado (artefato derivado, reproduzível pelo pipeline)
+data/processed/

@@ -44,14 +44,14 @@ ingênuo. Todas têm teste.
 | **Ofertas sobrepostas** (Premissa 1) | atribuir a mesma transação a duas ofertas conta em dobro | `test_overlapping_offers_apply_configured_priority` |
 | **Leakage temporal sutil** | um evento pós-recebimento numa feature de janela vaza o futuro | `test_post_receipt_transaction_does_not_leak_into_hist_features` |
 | **Cliente sem histórico** | join que remove a linha sem eventos, ou null onde deveria ser 0 | `test_no_history_yields_zeroed_counts` |
-| **Config inválida** | limiar/janela absurdos passam silenciosamente para o processamento | `test_negative_smd_threshold_fails_at_load`, `test_zero_campaign_wave_days_fails_at_load` |
+| **Config inválida** | limiar/nº de ondas absurdos passam silenciosamente para o processamento | `test_negative_smd_threshold_fails_at_load`, `test_zero_campaign_waves_fails_at_load` |
 
 ## Testes por arquivo
 
 ### `tests/test_config.py` — carga da config (REQ-110)
 - **`test_default_config_loads`** — a config padrão carrega e traz os defaults (limiar 0.1, sentinela 118).
 - **`test_negative_smd_threshold_fails_at_load`** — limiar SMD negativo levanta erro **na carga**, antes de tocar em dados.
-- **`test_zero_campaign_wave_days_fails_at_load`** — janela de onda ≤ 0 falha na carga.
+- **`test_zero_campaign_waves_fails_at_load`** — número de ondas ≤ 0 falha na carga.
 
 ### `tests/test_parsing.py` — leitura e coalescência de `value` (REQ-101)
 - **`test_received_and_viewed_read_offer_id_with_space`** — received/viewed extraem a oferta de `offer id` (com espaço), não-nula.
@@ -95,12 +95,18 @@ ingênuo. Todas têm teste.
 - **`test_g7_identity_missing_iff_three_fields_absent`** — o **⇔** da sentinela: a flag implica os três campos ausentes e vice-versa; `age` nunca vale 118 após normalização.
 - **`test_g8_no_nulls_in_non_nullable_columns`** — nenhuma coluna do contrato fora de `age`/`credit_card_limit` contém null (colunas intermediárias e features com null semântico são excluídas explicitamente).
 
+### `tests/test_contract.py` — contrato e escrita (REQ-107, T-108)
+- **`test_struct_type_and_pydantic_share_the_same_columns`** — as duas formas do contrato saem da mesma lista canônica; divergir seria defeito de contrato.
+- **`test_assembled_dataset_matches_contract_schema_exactly`** — nomes, ordem e tipos idênticos ao `StructType`.
+- **`test_intermediate_columns_are_dropped_from_the_contract`** — `view_time`/`valid_until`/`assigned_*` não vazam para o dataset final.
+- **`test_treatment_is_one_iff_offer_was_viewed`** — `treatment` codifica exposição, não recebimento.
+- **`test_campaign_wave_is_the_zero_based_rank_of_distinct_received_times`** — a onda é o rank do disparo, não um bucket de largura fixa.
+- **`test_g8_rejects_a_null_injected_into_a_non_nullable_column`** — G8 falha alto ao ver null onde o contrato proíbe.
+- **`test_nullable_history_features_do_not_trip_g8`** — `hist_recency_days`/`hist_time_view_to_conv` são null semântico ("sem histórico"), não violação.
+- **`test_validate_sample_raises_on_a_contract_violating_row`** — a validação Pydantic de amostra pega tipo fora do contrato.
+- **`test_run_writes_parquet_that_reconforms_to_the_contract`** — o parquet escrito em `data/processed/` relido bate com o contrato.
+
 ## Lacunas conhecidas (a fechar com as próximas tasks)
 
-- **G1/G8 pelo contrato imposto (T-108).** Hoje G1 e G8 são testados sobre a
-  saída intermediária do pipeline. Quando `src/contract.py` impuser o
-  `StructType` e a validação Pydantic de amostra, deve haver um teste que
-  valide o dataset **escrito em `data/processed/`** contra o contrato — o ponto
-  em que uma divergência de schema seria fatal.
 - **Fixture central compartilhada.** Cada arquivo define `_setup`/`_offer`
   locais. Ao crescer, vale extrair um builder de eventos único em `conftest.py`.

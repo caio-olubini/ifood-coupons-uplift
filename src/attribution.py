@@ -43,6 +43,52 @@ def _transactions(events: DataFrame) -> DataFrame:
     )
 
 
+def _priority_order(cfg: PipelineConfig):
+    """Ordenação de desempate entre recebimentos concorrentes (Premissa 1).
+
+    `offer_id` entra como critério secundário estável: duas ofertas de uma mesma
+    onda chegam no mesmo `received_time`, e sem esse desempate o `row_number`
+    escolheria arbitrariamente, quebrando a reprodutibilidade entre execuções.
+    """
+    received_order = (
+        F.col("received_time").asc()
+        if cfg.attribution_priority == AttributionPriority.EARLIEST_RECEIVED
+        else F.col("received_time").desc()
+    )
+    return [received_order, F.col("offer_id").asc()]
+
+
+def _owned_views(base: DataFrame, viewed: DataFrame, cfg: PipelineConfig) -> DataFrame:
+    """Atribui cada view física a um único recebimento e devolve a `view_time` por grão.
+
+    Um evento de view só serve a um recebimento cuja janela `[received_time,
+    valid_until]` o contenha — o que importa quando a MESMA oferta é reenviada
+    em ondas cujas janelas se sobrepõem: uma única view cairia em ambas e, se
+    compartilhada, marcaria `treatment=1` em dois recebimentos a partir de uma
+    só exposição. Espelhando a exclusividade das transações, a view pertence a
+    um recebimento só (desempate por `AttributionPriority`); cada recebimento
+    fica com a primeira view que passou a lhe pertencer.
+    """
+    view_owner_window = Window.partitionBy("account_id", "offer_id", "view_time").orderBy(
+        *_priority_order(cfg)
+    )
+    first_view_window = Window.partitionBy("account_id", "offer_id", "received_time").orderBy(
+        "view_time"
+    )
+    return (
+        base.join(viewed, on=["account_id", "offer_id"], how="inner")
+        .filter(
+            (F.col("view_time") >= F.col("received_time"))
+            & (F.col("view_time") <= F.col("valid_until"))
+        )
+        .withColumn("view_owner_rank", F.row_number().over(view_owner_window))
+        .filter(F.col("view_owner_rank") == 1)
+        .withColumn("first_view_rank", F.row_number().over(first_view_window))
+        .filter(F.col("first_view_rank") == 1)
+        .select("account_id", "offer_id", "received_time", "view_time")
+    )
+
+
 def attribute(events: DataFrame, offers: DataFrame, cfg: PipelineConfig) -> DataFrame:
     """Constrói o grão (account_id, offer_id, received_time) com view e transações atribuídas.
 
@@ -51,13 +97,17 @@ def attribute(events: DataFrame, offers: DataFrame, cfg: PipelineConfig) -> Data
     transações que caem em `[received_time, received_time + duration]`:
     `assigned_txn_count`, `assigned_txn_amount_sum` e `first_assigned_txn_time`.
 
-    Quando uma transação cai na janela de mais de uma oferta recebida pelo
-    mesmo cliente (violação da Premissa 1), a `AttributionPriority` decide a
-    qual oferta ela é atribuída, e o caso é logado.
+    Tanto view quanto transação são **exclusivas**: um único evento físico é
+    atribuído a no máximo um recebimento. Quando o mesmo evento é disputado por
+    mais de uma oferta ativa (violação da Premissa 1), a `AttributionPriority`
+    decide o dono e — no caso das transações — o conflito é logado.
     """
     received = _received(events)
     viewed = _viewed(events)
-    txns = _transactions(events).withColumn("txn_id", F.monotonically_increasing_id())
+    # `txn_id` é gerado uma vez e cacheado: `monotonically_increasing_id` é
+    # recalculado a cada action e há duas aqui (o log de sobreposição e a
+    # materialização final). Sem cache, os ids poderiam divergir entre elas.
+    txns = _transactions(events).withColumn("txn_id", F.monotonically_increasing_id()).cache()
 
     offers_meta = offers.select(F.col("id").alias("offer_id"), F.col("duration"))
 
@@ -65,38 +115,21 @@ def attribute(events: DataFrame, offers: DataFrame, cfg: PipelineConfig) -> Data
         "valid_until", F.col("received_time") + F.col("duration")
     )
 
-    # O view só pode ser atribuído a um recebimento cuja janela de validade o
-    # contenha. Isso importa quando a MESMA oferta é recebida em ondas distintas:
-    # um view pertence à onda cuja [received_time, valid_until] o cobre, não a
-    # qualquer recebimento anterior daquela oferta.
-    view_window = Window.partitionBy("account_id", "offer_id", "received_time").orderBy("view_time")
-    views_in_window = (
-        base.join(viewed, on=["account_id", "offer_id"], how="inner")
-        .filter(
-            (F.col("view_time") >= F.col("received_time"))
-            & (F.col("view_time") <= F.col("valid_until"))
-        )
-        .withColumn("rn", F.row_number().over(view_window))
-        .filter(F.col("rn") == 1)
-        .select("account_id", "offer_id", "received_time", "view_time")
-    )
     base_with_view = base.join(
-        views_in_window, on=["account_id", "offer_id", "received_time"], how="left"
+        _owned_views(base, viewed, cfg),
+        on=["account_id", "offer_id", "received_time"],
+        how="left",
     )
 
     # Regra influence-aware estrita: a transação só é atribuída como conversão
     # se ocorre DEPOIS do view e dentro da validade. Sem view (view_time nulo),
-    # `txn_time >= view_time` é nulo → nada é atribuído, como deve ser.
+    # `txn_time >= view_time` é nulo → nada é atribuído, como deve ser. Ofertas
+    # não-vistas ficam de fora daqui e nunca disputam a transação de uma vista.
     in_window_candidates = base_with_view.join(txns, on="account_id", how="inner").filter(
         (F.col("txn_time") >= F.col("view_time")) & (F.col("txn_time") <= F.col("valid_until"))
     )
 
-    priority_order = (
-        F.col("received_time").asc()
-        if cfg.attribution_priority == AttributionPriority.EARLIEST_RECEIVED
-        else F.col("received_time").desc()
-    )
-    txn_owner_window = Window.partitionBy("account_id", "txn_id").orderBy(priority_order)
+    txn_owner_window = Window.partitionBy("account_id", "txn_id").orderBy(*_priority_order(cfg))
 
     n_overlaps = (
         in_window_candidates.withColumn(

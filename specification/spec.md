@@ -67,13 +67,20 @@ Acceptance:
 - GIVEN uma transação fora de qualquer janela de validade THEN não é atribuída a nenhuma oferta.
 - GIVEN duas ofertas ativas no mesmo intervalo para um cliente THEN o pipeline aplica a regra de
   prioridade configurada e registra a ocorrência em log de premissa.
+- GIVEN um único evento físico (view ou transação) disputado por mais de um recebimento THEN ele
+  é atribuído a **um só** recebimento — view e transação são exclusivas, espelhando uma única
+  exposição/compra numa única linha do grão.
+- GIVEN dois recebimentos com `received_time` idêntico disputando o mesmo evento THEN o desempate
+  por `offer_id` torna a atribuição determinística entre execuções (reprodutibilidade).
 
 ### REQ-104 — Label influence-aware
-IF uma oferta foi vista e uma transação atribuída ocorre dentro da validade, THEN the system
-SHALL marcar `converted=1`; caso contrário `converted=0`.
+IF uma oferta foi vista e uma transação atribuída ocorre **após o view** e dentro da validade,
+THEN the system SHALL marcar `converted=1`; caso contrário `converted=0`.
 
 Acceptance:
 - GIVEN uma oferta completada sem view precedente THEN `converted=0`.
+- GIVEN uma transação na janela mas **anterior ao view** (comprou e depois viu) THEN `converted=0`
+  e a transação não entra em `conversion_value` — é sure thing, não conversão induzida (G4).
 - GIVEN uma oferta com transação após `received_time + duration` THEN `converted=0`.
 - GIVEN informational vista com transação na janela pós-view THEN `converted=1` sem depender
   de evento `offer completed`.

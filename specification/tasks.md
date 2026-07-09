@@ -69,7 +69,7 @@
 - **Accept:** T-G6 passa.
 
 ## T-108 — Contrato e escrita
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-107
 - **Depends on:** T-103, T-105, T-106, T-107
 - **Files:** `src/contract.py`, `src/pipeline.py`, `tests/test_contract.py`

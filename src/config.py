@@ -39,8 +39,18 @@ class PipelineConfig(BaseSettings):
     smd_threshold: float = Field(default=0.1, gt=0)
     attribution_priority: AttributionPriority = AttributionPriority.EARLIEST_RECEIVED
 
-    campaign_wave_days: float = Field(default=5.0, gt=0)
+    # A onda é o rank do `received_time` distinto (disparos discretos), não um
+    # bucket de largura fixa; `n_campaign_waves` é o número esperado de disparos,
+    # verificado na auditoria — não um parâmetro de derivação.
     n_campaign_waves: int = Field(default=6, gt=0)
+
+    contract_sample_size: int = Field(default=1000, gt=0)
+
+    # Infraestrutura do Spark (execução local). Não é semântica de pipeline, mas
+    # também não é valor mágico: o default de heap da JVM não roda o dado real.
+    spark_master: str = "local[*]"
+    spark_driver_memory: str = "4g"
+    spark_shuffle_partitions: int = Field(default=16, gt=0)
 
     seed: int = 42
 
@@ -50,8 +60,8 @@ class PipelineConfig(BaseSettings):
     def _check_positive_semantics(self) -> "PipelineConfig":
         if self.smd_threshold <= 0:
             raise ValueError("smd_threshold deve ser > 0")
-        if self.campaign_wave_days <= 0:
-            raise ValueError("campaign_wave_days deve ser > 0")
+        if self.n_campaign_waves <= 0:
+            raise ValueError("n_campaign_waves deve ser > 0")
         return self
 
     @property

@@ -15,6 +15,6 @@ def test_negative_smd_threshold_fails_at_load():
         load(smd_threshold=-0.1)
 
 
-def test_zero_campaign_wave_days_fails_at_load():
+def test_zero_campaign_waves_fails_at_load():
     with pytest.raises(ValidationError):
-        load(campaign_wave_days=0)
+        load(n_campaign_waves=0)

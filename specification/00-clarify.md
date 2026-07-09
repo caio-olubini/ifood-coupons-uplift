@@ -43,7 +43,9 @@ upgrade correspondente listado.
 1. **Uma oferta ativa por vez, por cliente.** A atribuição de uma transação a uma oferta
    assume que, na janela de validade, há no máximo uma oferta ativa para aquele cliente.
    Simplifica a atribuição temporal. *Limitação:* janelas sobrepostas existem no dataset;
-   o upgrade é atribuição por sobreposição (regra de prioridade). Documentado, não silencioso.
+   o upgrade é atribuição por sobreposição (regra de prioridade), aplicada de forma que cada
+   evento físico — view ou transação — pertença a **um só** recebimento (exposição não é
+   contada duas vezes). Documentado, não silencioso.
 
 2. **Conversão é influence-aware.** Uma oferta só conta como convertida se foi
    **vista E completada dentro da duração**. Completado sem view precedente = compra que

@@ -21,11 +21,18 @@ e atribuição, não o grão.
 | `offer_id` | string | oferta recebida |
 | `offer_type` | string | `bogo` \| `discount` \| `informational` |
 | `received_time` | double | dia do recebimento (t desde início do teste) |
-| `campaign_wave` | int | onda de campanha (0..5) derivada de `received_time` |
+| `campaign_wave` | int | onda de campanha (0..5): rank 0-based do `received_time` distinto |
 | `treatment` | int | tratamento efetivo: 1 se a oferta foi **vista**, 0 caso contrário |
 
 `treatment` codifica exposição real, não recebimento. Uma oferta recebida e não vista não
-expôs o cliente ao estímulo — é controle para fins de uplift.
+expôs o cliente ao estímulo — é controle para fins de uplift. Um único evento físico de view
+marca **no máximo um** recebimento: quando a mesma oferta é reenviada em ondas com janelas
+sobrepostas, uma view que cai nas duas não pode contar como duas exposições (ver G9).
+
+`campaign_wave` é o **rank** do `received_time` distinto, não um bucket de largura fixa: os
+disparos são discretos (t=0, 7, 14, 17, 21, 24) e nenhuma janela de N dias os separa em
+exatamente seis ondas. `n_campaign_waves` da config é o número **esperado** de ondas — a
+auditoria verifica a igualdade, não a assume.
 
 ### Label
 | Coluna | Tipo | Descrição |
@@ -50,7 +57,7 @@ expôs o cliente ao estímulo — é controle para fins de uplift.
 | `hist_txn_count` | int |
 | `hist_avg_ticket` | double |
 | `hist_spend_std` | double |
-| `hist_recency_days` | double |
+| `hist_recency_days` | double (nullable) |
 | `hist_frequency` | double |
 | `hist_spend_trend` | double |
 
@@ -64,7 +71,7 @@ expôs o cliente ao estímulo — é controle para fins de uplift.
 | `hist_conv_rate_bogo` | double | |
 | `hist_conv_rate_discount` | double | |
 | `hist_completed_unseen_flag` | int | já completou sem ver — assinatura de sure thing |
-| `hist_time_view_to_conv` | double | tempo médio view→conversão |
+| `hist_time_view_to_conv` | double (nullable) | tempo médio view→conversão |
 
 ### Features da oferta e contexto
 | Coluna | Tipo |
@@ -97,7 +104,14 @@ da suíte de testes do pipeline.
 - **G6 — Custo coerente.** `reward_cost > 0` ⇒ `converted=1` e `offer_type ≠ informational`.
 - **G7 — Sentinela tratada.** `age` nunca vale 118; `identity_missing=1` ⇔ os três campos
   de perfil ausentes.
-- **G8 — Sem nulo em coluna não-nullable.** Apenas `age` e `credit_card_limit` admitem null.
+- **G8 — Sem nulo em coluna não-nullable.** Apenas `age`, `credit_card_limit`,
+  `hist_recency_days` e `hist_time_view_to_conv` admitem null. Os dois primeiros porque o
+  perfil pode faltar (Premissa 3); os dois últimos porque `null` ali significa
+  **"não há histórico"** — sinal que as árvores (LGBM) consomem direto e que fabricar um
+  número (ex.: `recency=0`, que diria "comprou hoje") corromperia em silêncio.
+- **G9 — Exposição exclusiva.** Um evento físico de view `(account_id, offer_id, view_time)`
+  é `view_time` de **no máximo um** recebimento. Uma exposição jamais vira `treatment=1` em
+  duas linhas por sobreposição de janelas de reenvio.
 
 ## Encarnação executável
 
@@ -106,4 +120,7 @@ O contrato tem duas formas que devem concordar:
 - **Modelo Pydantic** — valida o schema e uma **amostra** do output (não linha a linha em
   massa). Falha alto se o pipeline entregar algo fora deste contrato.
 
-Divergência entre as duas formas é um defeito de contrato.
+Divergência entre as duas formas é um defeito de contrato. Em `src/contract.py` ambas são
+geradas de uma **única** lista canônica de colunas (`_COLUMNS`), tornando a divergência
+impossível por construção. `src/pipeline.py` monta o grão, impõe o schema e escreve
+`data/processed/`; `notebooks/0_pipeline_audit.ipynb` prova as garantias sobre o dado real.

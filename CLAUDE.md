@@ -17,10 +17,13 @@ uv sync                        # instala dependências (inclui grupo dev)
 uv run pytest -q               # roda toda a suíte de testes de integridade
 uv run pytest tests/test_leakage.py -q   # um arquivo só
 
-# Executar o notebook de revisão do pipeline (kernel do venv do uv):
-uv run python -m ipykernel install --user --name ifood-uplift  # uma vez
-uv run jupyter nbconvert --to notebook --execute --inplace \
-  --ExecutePreprocessor.kernel_name=ifood-uplift notebooks/00_pipeline_review.ipynb
+uv run python -m src.pipeline   # bruto → data/processed/ (valida o contrato antes de escrever)
+uv run python -m src.pipeline --config outra.yaml
+
+# Executar um notebook de ponta a ponta (nbclient já está no grupo dev):
+uv run python -c "import nbformat; from nbclient import NotebookClient; \
+nb=nbformat.read('notebooks/0_pipeline_audit.ipynb',as_version=4); \
+NotebookClient(nb,timeout=5400,kernel_name='python3',resources={'metadata':{'path':'.'}}).execute()"
 ```
 
 Ambiente é gerenciado por **UV**, tudo roda local (sem nuvem/Databricks).
@@ -39,10 +42,17 @@ Fluxo em estágios, cada um uma função pura testável em `src/`. Notebooks só
 | `src/attribution.py` | `attribute`: grão `(account_id, offer_id, received_time)`, uma linha por `offer received`, com view e transações agregadas dentro da janela de validade; resolve sobreposição por `AttributionPriority` (REQ-103). `build_label`: `converted`/`conversion_value` influence-aware (REQ-104). |
 | `src/features.py` | `build`: features `hist_*` sem leakage (só `time < received_time`, G2) + features de oferta/contexto (REQ-105). |
 | `src/cost.py` | `add_reward_cost`: `reward_cost` = `discount_value` do catálogo em conversões bogo/discount; 0 caso contrário (REQ-106, G6). |
+| `src/contract.py` | Encarnação executável do contrato (REQ-107): `StructType` **e** modelo Pydantic gerados de uma única lista `_COLUMNS` — divergir é impossível. `enforce_schema`, `assert_schema`, `assert_no_unexpected_nulls` (G8), `validate_sample`. |
+| `src/pipeline.py` | Orquestra bruto→processado: `assemble_processed` (junta perfil, deriva `treatment` e `campaign_wave`, projeta no contrato), `validate`, `run` (escreve `data/processed/`), `build_spark(cfg)` e o entrypoint CLI. |
 
 Ordem de chamada: `io.parse_events` → `clean.normalize_profile` (paralelo) →
 `attribution.attribute` → `attribution.build_label` → `features.build` →
-`cost.add_reward_cost`. Ver `notebooks/00_pipeline_review.ipynb` para o encadeamento real.
+`cost.add_reward_cost` → junção do perfil + `treatment`/`campaign_wave` →
+`contract.enforce_schema`. Tudo isso é `pipeline.assemble_processed`; `pipeline.run`
+valida e escreve. `notebooks/0_pipeline_audit.ipynb` prova as garantias sobre o dado real.
+
+`treatment` = a oferta foi **vista**. `campaign_wave` = rank do `received_time` distinto
+(os disparos são discretos: t=0, 7, 14, 17, 21, 24) — **não** um bucket de largura fixa.
 
 ## Contrato e garantias
 
@@ -50,12 +60,14 @@ Ordem de chamada: `io.parse_events` → `clean.normalize_profile` (paralelo) →
 modelagem (spec 02). O grão é `(account_id, offer_id, received_time)`, único.
 Mudança no contrato é mudança de interface — atualize as specs, não só o código.
 
-As garantias **G1–G8** são invariantes testados; se violados, quebram o projeto
+As garantias **G1–G9** são invariantes testados; se violados, quebram o projeto
 em silêncio. Cada uma tem teste dedicado em `tests/`:
 
 - **G1** grão único · **G2** sem leakage temporal · **G3** label exige view ·
-  **G4** label dentro da validade · **G5** informational sem `offer completed` ·
-  **G6** custo coerente · **G7** sentinela tratada · **G8** sem nulo em coluna não-nullable.
+  **G4** conversão pós-view e dentro da validade · **G5** informational sem
+  `offer completed` · **G6** custo coerente · **G7** sentinela tratada ·
+  **G8** sem nulo em coluna não-nullable · **G9** exposição exclusiva (uma view
+  física marca no máximo um recebimento).
 
 Testes usam **fixtures sintéticas minúsculas e determinísticas** montadas para
 exercitar a falha específica — não amostras do dataset real. Rodar o dado real
@@ -76,9 +88,19 @@ transações na janela); ao mexer no pipeline, valide também no notebook.
 
 ## Estado atual
 
-Implementado e testado (24 testes verdes): T-101 a T-107 (config, io, clean,
-attribution, label, features, cost). Ver `specification/tasks.md` para o board.
-Próximo: T-108 (contrato `StructType` + Pydantic + escrita em `data/processed/`).
+Implementado e testado (43 testes verdes): T-101 a T-108 (config, io, clean,
+attribution, label, features, cost, contrato + escrita). Ver `specification/tasks.md`
+para o board. Próximo: T-109 (`src/viz.py`) e T-110 (EDA).
 
-`notebooks/00_pipeline_review.ipynb` é **temporário** — descartar ou promover a
-`notebooks/1_eda.ipynb` quando T-108 permitir ler o dataset processado do disco.
+`notebooks/0_pipeline_audit.ipynb` **prova** as garantias G1–G9 e os REQ-101…110 sobre o
+dado real: 54 verificações, cada uma um `assert` sobre o DataFrame completo — nenhuma
+amostra, nenhum `try/except`. Roda de ponta a ponta com "Run All". Se uma garantia
+regredir, o notebook fica vermelho na célula que a provou.
+
+`notebooks/00_pipeline_review.ipynb` é **temporário** — foi superado pelo de auditoria;
+descartar ou promover a `notebooks/1_eda.ipynb` em T-110.
+
+Duas divergências entre spec e dado, levantadas pela auditoria (não são bugs do pipeline):
+`completed` sem view precedente mede **25,8%**, não os 28,4% da Premissa 2; e o empate de
+`received_time` (mesmo cliente, duas ofertas no mesmo instante) **não ocorre** no dado real
+— o desempate estável por `offer_id` é defensivo e coberto só por fixture sintética.

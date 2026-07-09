@@ -6,6 +6,7 @@ que atravessa o pipeline inteiro — o lugar onde uma mina reaparece em silênci
 
 import json
 
+from src import contract
 from src.attribution import attribute, build_label
 from src.clean import normalize_profile
 from src.config import load
@@ -120,20 +121,17 @@ def test_g7_identity_missing_iff_three_fields_absent(spark, tmp_path):
 
 # --- G8: nulos apenas onde o contrato permite ---------------------------------
 
-# O contrato (schema-processed.md) declara nullable apenas `age` e
-# `credit_card_limit`. As demais colunas abaixo são intermediárias do pipeline
-# (serão descartadas/coalescidas quando T-108 impuser o StructType do contrato)
-# ou features onde null tem semântica de "não há histórico" — não fazem parte
-# do contrato final, por isso ficam fora da checagem de G8.
-_CONTRACT_NULLABLE = {"age", "credit_card_limit"}
-_INTERMEDIATE_OR_SEMANTIC_NULL = {
-    "view_time",               # intermediária: oferta recebida sem view
-    "valid_until",             # intermediária de atribuição
+# Este teste corre sobre a saída *intermediária* do pipeline (antes de
+# `contract.enforce_schema`), por isso ainda enxerga colunas que o contrato
+# descarta. As nullable do contrato vêm de `src/contract.py` — fonte única, para
+# que este teste não possa discordar dele. G8 sobre o dataset final (já no
+# contrato) é coberto em `tests/test_contract.py`.
+_INTERMEDIATE_ONLY = {
+    "view_time",                # intermediária: oferta recebida sem view
+    "valid_until",              # intermediária de atribuição
     "first_assigned_txn_time",  # intermediária: sem transação atribuída
-    "hist_recency_days",       # feature: null quando não há transação prévia
-    "hist_time_view_to_conv",  # feature: null quando não há view→conv prévio
 }
-_ALLOWED_NULL = _CONTRACT_NULLABLE | _INTERMEDIATE_OR_SEMANTIC_NULL
+_ALLOWED_NULL = set(contract.NULLABLE_COLUMNS) | _INTERMEDIATE_ONLY
 
 
 def test_g8_no_nulls_in_non_nullable_columns(spark, tmp_path):

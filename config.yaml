@@ -14,8 +14,17 @@ test_start_date: "20180726" # t=0 do teste; proxy = max(registered_on) observado
 smd_threshold: 0.1
 attribution_priority: earliest_received # earliest_received | latest_received
 
-campaign_wave_days: 5.0
+# A onda é derivada como o rank do received_time distinto (os disparos são
+# discretos: t=0, 7, 14, 17, 21, 24). n_campaign_waves é o nº esperado de ondas,
+# verificado na auditoria — não um parâmetro de derivação.
 n_campaign_waves: 6
+
+contract_sample_size: 1000 # nº de linhas amostradas na validação Pydantic do contrato (REQ-107)
+
+# Infra do Spark local: o heap default da JVM não dá conta do dado real.
+spark_master: "local[*]"
+spark_driver_memory: "4g"
+spark_shuffle_partitions: 16
 
 seed: 42
 
