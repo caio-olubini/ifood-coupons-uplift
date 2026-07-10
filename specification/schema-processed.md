@@ -112,6 +112,12 @@ da suíte de testes do pipeline.
 - **G9 — Exposição exclusiva.** Um evento físico de view `(account_id, offer_id, view_time)`
   é `view_time` de **no máximo um** recebimento. Uma exposição jamais vira `treatment=1` em
   duas linhas por sobreposição de janelas de reenvio.
+- **G10 — Conversão atinge o gasto mínimo.** `converted=1` ⇒ `conversion_value ≥ min_value`.
+  Só transações com `amount ≥ min_value` são atribuíveis: abaixo desse valor a recompensa não
+  é ativada, e contar a compra como conversão faria `reward_cost` debitar um desconto que
+  jamais seria concedido. O limiar é **por transação**, não sobre o gasto acumulado na janela.
+  `informational` tem `min_value = 0` e nunca é filtrada. Combinada a G6, garante que todo
+  `reward_cost > 0` corresponde a um desconto realmente devido.
 
 ## Encarnação executável
 

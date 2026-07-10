@@ -4,6 +4,11 @@
 do catálogo, para conversões de `bogo`/`discount`. Para `informational` (sem
 recompensa) e para não-convertidos, o custo é 0 — garantindo G6:
 `reward_cost > 0` ⇒ `converted=1` e `offer_type ≠ informational`.
+
+Cobrar o custo em toda conversão só é correto porque `converted=1` implica
+`conversion_value ≥ min_value` (G10, imposto lá atrás na atribuição): a compra
+de fato disparou a recompensa. Enquanto a atribuição aceitava qualquer compra
+pós-view, este módulo debitava desconto que nunca teria sido concedido.
 """
 
 from __future__ import annotations

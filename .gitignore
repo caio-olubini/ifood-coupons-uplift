@@ -11,3 +11,7 @@ wheels/
 
 # Dataset processado (artefato derivado, reproduzível pelo pipeline)
 data/processed/
+
+# Tracking local de experimentos (MLflow) — artefato derivado, não versionado
+mlruns/
+mlflow.db

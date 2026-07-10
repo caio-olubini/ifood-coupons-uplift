@@ -55,6 +55,31 @@ Acceptance:
 - GIVEN um cliente sure thing (μ₀ já alto) THEN o uplift estimado tende a zero.
 - GIVEN a saída THEN há uma estimativa de uplift por par cliente × tipo de oferta.
 
+> **BLOQUEADO — o par (`treatment`, `converted`) não estima efeito causal.**
+> `G3` do contrato define `converted=1` ⇒ houve `offer viewed`, e `treatment=1` ⇔ viu.
+> Logo `treatment=0 ⇒ converted=0` **por construção do label**: o controle não tem
+> nenhum outcome positivo (medido: 0 em 21.623 linhas, nos três `offer_type`).
+> Consequência: μ₀ ≡ 0, e τ(x) = μ₁(x) − μ₀(x) degenera em τ ≡ μ₁ — o "uplift" é a
+> taxa de conversão prevista dos tratados, não um efeito incremental.
+>
+> O primeiro critério de aceite é **inatingível como escrito**: μ₀ nunca pode ser
+> "já alto", pois a Premissa 2 joga o *sure thing* (completou sem ver) para fora do
+> label. Medido no holdout: uplift médio 45,8 p.p. contra uma diferença bruta e
+> ainda confundida de 8,8 p.p. (`eda.window_spend`) — 5,2× o teto que
+> `eda.naive_spend_lift` já documentava como limite superior.
+>
+> Evidência reprodutível em `notebooks/2_modeling.ipynb` §3.2–3.5
+> (`uplift.label_by_arm`, `uplift.stage_diagnostics`). REQ-203 a REQ-208 herdam a
+> contaminação enquanto isto não for resolvido: uma política sobre τ ≡ μ₁ aloca por
+> propensão a converter, que é exatamente o baseline *top-completion* de REQ-205.
+>
+> Resolver exige **decisão de contrato**, não correção de código:
+> 1. **Tratamento = recebeu** (o braço de fato aleatorizado, Premissa 4). Mas não há
+>    controle "não recebeu nada" no dataset; a comparação vira entre tipos de oferta.
+> 2. **Outcome = gasto na janela** (`window_spend`, visto ou não). Admite μ₀ > 0, mas
+>    mantém `treatment` = viu, que não é aleatorizado — o uplift sai confundido pela
+>    auto-seleção de quem abre e exige premissa causal adicional.
+
 ### REQ-203 — Métrica de uplift
 WHEN um modelo de uplift é avaliado, the system SHALL usar Qini/AUUC, não métricas de
 classificação, para seleção e comparação.

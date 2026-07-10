@@ -21,6 +21,17 @@ n_campaign_waves: 6
 
 contract_sample_size: 1000 # nº de linhas amostradas na validação Pydantic do contrato (REQ-107)
 
+# EDA descritiva (REQ-108) e segmentação (REQ-111).
+histogram_bins: 40
+quantile_rel_error: 0.001 # erro relativo do approxQuantile (0 = exato, caro)
+outlier_iqr_multiplier: 1.5 # cerca de Tukey: fora de [Q1 - k·IQR, Q3 + k·IQR]
+correlation_threshold: 0.8 # |r| a partir do qual o par é reportado como redundante
+
+# K-Means: k é escolhido por silhouette dentro da faixa, a varredura inteira reportada.
+cluster_k_min: 2
+cluster_k_max: 8
+cluster_silhouette_sample: 5000 # silhouette é O(n²) — amostra, com a seed da config
+
 # Infra do Spark local: o heap default da JVM não dá conta do dado real.
 spark_master: "local[*]"
 spark_driver_memory: "4g"
@@ -31,3 +42,30 @@ seed: 42
 # Nota: reward_cost (REQ-106) usa o discount_value do próprio catálogo de
 # ofertas, não uma tabela de custo por tipo — logo não há parâmetro de custo
 # aqui. Se o custo passar a divergir do discount_value, adicione-o nesta config.
+
+# Modelagem (spec 02). Split treino/validação por campaign_wave — ondas < cutoff
+# treinam, >= cutoff validam. Nunca split aleatório.
+validation_wave_cutoff: 4
+
+# Baseline preditivo (REQ-201): âncora, não tuning.
+lgbm_n_estimators: 200
+lgbm_max_depth: -1
+lgbm_learning_rate: 0.05
+logit_max_iter: 1000
+
+# X-learner (REQ-202).
+xlearner_n_estimators: 200
+xlearner_max_depth: -1
+xlearner_learning_rate: 0.05
+
+# Avaliação offline por IPW (REQ-206, REQ-207).
+ipw_min_propensity: 0.001
+ipw_confidence_level: 0.95
+
+# Dimensionamento do próximo A/B (REQ-211).
+ab_test_power: 0.8
+ab_test_alpha: 0.05
+
+# Tracking de experimentos (REQ-209): SQLite local, sem servidor.
+mlflow_tracking_uri: "sqlite:///mlflow.db"
+mlflow_experiment_name: "ifood-uplift"

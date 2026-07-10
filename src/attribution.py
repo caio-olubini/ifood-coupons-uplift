@@ -1,9 +1,21 @@
-"""Atribuição temporal oferta→transação e label influence-aware (REQ-103, REQ-104).
+"""Atribuição temporal oferta→transação e label de conversão (REQ-103, REQ-104).
 
 Grão de saída: uma linha por `offer received` (account_id, offer_id, received_time).
 Sob a Premissa 1 (uma oferta ativa por vez, por cliente), no máximo uma oferta
 compete pela mesma transação; quando isso falha, a `AttributionPriority` da
 config decide e a ocorrência é logada — nunca um `if` silencioso.
+
+**O view não é condição da conversão.** `treatment` (viu / não viu) é a exposição;
+`converted` (comprou na validade, atingindo o `min_value`) é o resultado. São eixos
+independentes: um cliente pode não ver a oferta e ainda comprar na janela. Amarrar a
+label ao view zeraria o resultado em todo o grupo de controle e destruiria o
+contrafactual que o modelo de uplift precisa estimar (μ₀).
+
+Uma transação só é elegível à atribuição se atinge o gasto mínimo da oferta
+(`txn_amount >= min_value`, G10): abaixo desse valor o desconto nunca teria sido
+concedido, e contar a compra como conversão faria o pipeline debitar um
+`reward_cost` que a empresa não pagaria. `informational` tem `min_value = 0` e
+portanto não é filtrada — não há gatilho de valor a atingir.
 """
 
 from __future__ import annotations
@@ -97,6 +109,9 @@ def attribute(events: DataFrame, offers: DataFrame, cfg: PipelineConfig) -> Data
     transações que caem em `[received_time, received_time + duration]`:
     `assigned_txn_count`, `assigned_txn_amount_sum` e `first_assigned_txn_time`.
 
+    Só entram as transações que atingem o gasto mínimo da oferta (`min_value`):
+    uma compra abaixo dele não dispara a recompensa, logo não é conversão.
+
     Tanto view quanto transação são **exclusivas**: um único evento físico é
     atribuído a no máximo um recebimento. Quando o mesmo evento é disputado por
     mais de uma oferta ativa (violação da Premissa 1), a `AttributionPriority`
@@ -109,7 +124,11 @@ def attribute(events: DataFrame, offers: DataFrame, cfg: PipelineConfig) -> Data
     # materialização final). Sem cache, os ids poderiam divergir entre elas.
     txns = _transactions(events).withColumn("txn_id", F.monotonically_increasing_id()).cache()
 
-    offers_meta = offers.select(F.col("id").alias("offer_id"), F.col("duration"))
+    offers_meta = offers.select(
+        F.col("id").alias("offer_id"),
+        F.col("duration"),
+        F.col("min_value").cast("double").alias("min_value"),
+    )
 
     base = received.join(offers_meta, on="offer_id", how="left").withColumn(
         "valid_until", F.col("received_time") + F.col("duration")
@@ -121,12 +140,23 @@ def attribute(events: DataFrame, offers: DataFrame, cfg: PipelineConfig) -> Data
         how="left",
     )
 
-    # Regra influence-aware estrita: a transação só é atribuída como conversão
-    # se ocorre DEPOIS do view e dentro da validade. Sem view (view_time nulo),
-    # `txn_time >= view_time` é nulo → nada é atribuído, como deve ser. Ofertas
-    # não-vistas ficam de fora daqui e nunca disputam a transação de uma vista.
+    # A janela de atribuição é a validade da oferta, `[received_time, valid_until]`,
+    # e **não depende do view**. O view é o *tratamento* (exposição), não uma
+    # condição da conversão: exigi-lo aqui zeraria a label em todo o grupo de
+    # controle (`treatment=0 ⇒ converted=0` por construção), colapsando μ₀ ≡ 0 e
+    # tornando o uplift τ = μ₁ − μ₀ ≡ μ₁ — isto é, não-causal. Quem não viu e
+    # comprou dentro da validade converteu; é exatamente esse o contrafactual que
+    # o X-learner precisa observar.
+    #
+    # O gasto mínimo (G10) é filtrado AQUI, antes da disputa de posse: uma compra
+    # abaixo do `min_value` não ativa a recompensa, então a oferta não a "gastou"
+    # e não pode reivindicá-la. Filtrar depois do `row_number` deixaria a oferta
+    # inelegível vencer a disputa e descartar a transação de uma oferta elegível
+    # de `min_value` menor, que legitimamente converteria com ela.
     in_window_candidates = base_with_view.join(txns, on="account_id", how="inner").filter(
-        (F.col("txn_time") >= F.col("view_time")) & (F.col("txn_time") <= F.col("valid_until"))
+        (F.col("txn_time") >= F.col("received_time"))
+        & (F.col("txn_time") <= F.col("valid_until"))
+        & (F.col("txn_amount") >= F.col("min_value"))
     )
 
     txn_owner_window = Window.partitionBy("account_id", "txn_id").orderBy(*_priority_order(cfg))
@@ -176,12 +206,16 @@ def attribute(events: DataFrame, offers: DataFrame, cfg: PipelineConfig) -> Data
 
 
 def build_label(df: DataFrame, cfg: PipelineConfig) -> DataFrame:
-    """Deriva `converted` e `conversion_value` (REQ-104, Premissa 2).
+    """Deriva `converted` e `conversion_value` (REQ-104).
 
     `converted=1` sse há ao menos uma transação atribuída — e a atribuição em
-    `attribute` já exige que a transação ocorra DEPOIS do view e dentro da
-    validade (influence-aware estrito). Logo `assigned_txn_count > 0` já implica
-    view precedente; nunca deriva de `offer completed` (cobre informational, G5).
+    `attribute` exige que a transação ocorra dentro da validade
+    `[received_time, valid_until]` e com valor ≥ `min_value` da oferta. **Não**
+    exige view: ver a oferta é o tratamento, não o rótulo. Um recebimento não
+    visto com compra na janela tem `converted=1`, e é justamente essa massa que
+    dá μ₀ > 0 no grupo de controle.
+
+    Nunca deriva de `offer completed` (cobre informational, G5).
     `conversion_value` soma as transações atribuídas.
     """
     converted = (F.col("assigned_txn_count") > 0).cast("int")

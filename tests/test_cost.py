@@ -15,10 +15,10 @@ def _setup(spark, tmp_path, events, offers):
     return cfg, parsed, offers_df
 
 
-def _offer(offer_id, duration=7.0, offer_type="bogo", discount_value=10):
+def _offer(offer_id, duration=7.0, offer_type="bogo", discount_value=10, min_value=10):
     return {
         "channels": ["web"],
-        "min_value": 10,
+        "min_value": min_value,
         "duration": duration,
         "id": offer_id,
         "offer_type": offer_type,
@@ -65,7 +65,8 @@ def test_informational_conversion_has_zero_cost(spark, tmp_path):
          "time_since_test_start": 2.0},
     ]
     cfg, parsed, offers_df = _setup(
-        spark, tmp_path, events, [_offer("off1", duration=4.0, offer_type="informational", discount_value=0)]
+        spark, tmp_path, events,
+        [_offer("off1", duration=4.0, offer_type="informational", discount_value=0, min_value=0)],
     )
     row = _labeled_with_cost(spark, cfg, parsed, offers_df).collect()[0]
 
@@ -78,7 +79,26 @@ def test_not_converted_has_zero_cost(spark, tmp_path):
         {"event": "offer received", "account_id": "acc1",
          "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
          "time_since_test_start": 0.0},
-        # sem view: não converte
+        # compra fora da validade (duration=7): não converte, logo não custa
+        {"event": "transaction", "account_id": "acc1",
+         "value": {"amount": 30.0, "offer id": None, "offer_id": None, "reward": None},
+         "time_since_test_start": 9.0},
+    ]
+    cfg, parsed, offers_df = _setup(spark, tmp_path, events, [_offer("off1", discount_value=10)])
+    row = _labeled_with_cost(spark, cfg, parsed, offers_df).collect()[0]
+
+    assert row["converted"] == 0
+    assert row["reward_cost"] == 0.0
+
+
+def test_unviewed_conversion_still_costs(spark, tmp_path):
+    # O desconto é concedido a quem atinge o mínimo na validade, tenha visto a
+    # oferta ou não — no dado real, 25,8% dos `offer completed` não têm view
+    # precedente. O custo segue a conversão, não a exposição.
+    events = [
+        {"event": "offer received", "account_id": "acc1",
+         "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
+         "time_since_test_start": 0.0},
         {"event": "transaction", "account_id": "acc1",
          "value": {"amount": 30.0, "offer id": None, "offer_id": None, "reward": None},
          "time_since_test_start": 2.0},
@@ -86,8 +106,9 @@ def test_not_converted_has_zero_cost(spark, tmp_path):
     cfg, parsed, offers_df = _setup(spark, tmp_path, events, [_offer("off1", discount_value=10)])
     row = _labeled_with_cost(spark, cfg, parsed, offers_df).collect()[0]
 
-    assert row["converted"] == 0
-    assert row["reward_cost"] == 0.0
+    assert row["view_time"] is None
+    assert row["converted"] == 1
+    assert row["reward_cost"] == 10.0
 
 
 def test_g6_invariant_holds_across_rows(spark, tmp_path):

@@ -1,4 +1,4 @@
-"""Testes de integridade end-to-end das garantias do contrato (G1, G7, G8).
+"""Testes de integridade end-to-end das garantias do contrato (G1, G7, G8, G10).
 
 Ao contrário dos testes por módulo, estes exercem invariantes sobre o dataset
 que atravessa o pipeline inteiro — o lugar onde uma mina reaparece em silêncio.
@@ -87,6 +87,50 @@ def test_g1_same_offer_two_waves_both_survive(spark, tmp_path):
     assert received_times == [0.0, 15.0]
 
 
+# --- G10: conversão atinge o gasto mínimo da oferta ---------------------------
+
+def _viewed(account_id, offer_id, t):
+    return {
+        "event": "offer viewed", "account_id": account_id,
+        "value": {"amount": None, "offer id": offer_id, "offer_id": None, "reward": None},
+        "time_since_test_start": t,
+    }
+
+
+def _transaction(account_id, amount, t):
+    return {
+        "event": "transaction", "account_id": account_id,
+        "value": {"amount": amount, "offer id": None, "offer_id": None, "reward": None},
+        "time_since_test_start": t,
+    }
+
+
+def test_g10_conversion_implies_min_value_reached(spark, tmp_path):
+    # G10 sobre o dataset inteiro: `converted=1` ⇒ `conversion_value >= min_value`.
+    # acc1 compra abaixo do mínimo (não converte, não custa); acc2 acima (converte).
+    # Antes de G10, acc1 convertia e pagava R$ 10 de desconto por uma compra de R$ 6.
+    events = [
+        _received("acc1", "off1", 0.0), _viewed("acc1", "off1", 1.0), _transaction("acc1", 6.0, 2.0),
+        _received("acc2", "off1", 0.0), _viewed("acc2", "off1", 1.0), _transaction("acc2", 40.0, 2.0),
+    ]
+    profiles = [
+        {"age": 40, "registered_on": "20180101", "gender": "M", "id": "acc1", "credit_card_limit": 1000},
+        {"age": 30, "registered_on": "20180101", "gender": "F", "id": "acc2", "credit_card_limit": 2000},
+    ]
+    cfg, parsed, offers_df, _ = _setup(
+        spark, tmp_path, events, [_offer("off1", min_value=20, discount_value=10)], profiles
+    )
+    rows = {r["account_id"]: r for r in _full_pipeline(spark, cfg, parsed, offers_df).collect()}
+
+    assert rows["acc1"]["converted"] == 0
+    assert rows["acc1"]["reward_cost"] == 0.0
+    assert rows["acc2"]["converted"] == 1   # o invariante não é vácuo
+
+    for r in rows.values():
+        if r["converted"] == 1:
+            assert r["conversion_value"] >= r["min_value"]
+
+
 # --- G7: sentinela de identidade (iff com os três campos ausentes) ------------
 
 def test_g7_identity_missing_iff_three_fields_absent(spark, tmp_path):
@@ -163,3 +207,41 @@ def test_g8_no_nulls_in_non_nullable_columns(spark, tmp_path):
         for col, value in row.asDict().items():
             if col not in _ALLOWED_NULL:
                 assert value is not None, f"nulo inesperado em coluna não-nullable '{col}'"
+
+
+# --- Contrafactual observável: o controle pode converter ----------------------
+
+def test_pipeline_label_admits_conversion_in_control(spark, tmp_path):
+    """O invariante que torna o uplift estimável: `treatment=0` pode ter `converted=1`.
+
+    `treatment` (viu / não viu) e `converted` (comprou na validade, atingindo o
+    mínimo) são eixos independentes. Se o label voltasse a exigir view, todo o
+    grupo de controle teria `converted=0`, μ₀ colapsaria em zero e o X-learner
+    devolveria μ₁ no lugar do efeito causal.
+
+    acc1 NÃO vê a oferta e compra na janela → controle que converteu.
+    acc2 vê a oferta e compra na janela     → tratado que converteu.
+    """
+    events = [
+        _received("acc1", "off1", 0.0),
+        {"event": "transaction", "account_id": "acc1",
+         "value": {"amount": 30.0, "offer id": None, "offer_id": None, "reward": None},
+         "time_since_test_start": 2.0},
+        _received("acc2", "off1", 0.0),
+        {"event": "offer viewed", "account_id": "acc2",
+         "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
+         "time_since_test_start": 1.0},
+        {"event": "transaction", "account_id": "acc2",
+         "value": {"amount": 30.0, "offer id": None, "offer_id": None, "reward": None},
+         "time_since_test_start": 2.0},
+    ]
+    cfg, parsed, offers_df, _ = _setup(spark, tmp_path, events, [_offer("off1")], [])
+    labeled = build_label(attribute(parsed, offers_df, cfg), cfg)
+    rows = {r["account_id"]: r for r in labeled.collect()}
+
+    # Controle: não viu, mas comprou dentro da validade → converteu.
+    assert rows["acc1"]["view_time"] is None
+    assert rows["acc1"]["converted"] == 1
+    # Tratado: viu e comprou → converteu.
+    assert rows["acc2"]["view_time"] == 1.0
+    assert rows["acc2"]["converted"] == 1

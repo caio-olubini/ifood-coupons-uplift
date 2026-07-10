@@ -46,6 +46,18 @@ class PipelineConfig(BaseSettings):
 
     contract_sample_size: int = Field(default=1000, gt=0)
 
+    # EDA: parâmetros das visões descritivas (REQ-108, REQ-111).
+    histogram_bins: int = Field(default=40, gt=1)
+    quantile_rel_error: float = Field(default=0.001, ge=0, lt=1)
+    outlier_iqr_multiplier: float = Field(default=1.5, gt=0)
+    correlation_threshold: float = Field(default=0.8, gt=0, le=1)
+
+    # Segmentação K-Means (REQ-111). `k` é escolhido por silhouette dentro da
+    # faixa; a varredura inteira é reportada, nunca só o vencedor.
+    cluster_k_min: int = Field(default=2, gt=1)
+    cluster_k_max: int = Field(default=8, gt=1)
+    cluster_silhouette_sample: int = Field(default=5000, gt=1)
+
     # Infraestrutura do Spark (execução local). Não é semântica de pipeline, mas
     # também não é valor mágico: o default de heap da JVM não roda o dado real.
     spark_master: str = "local[*]"
@@ -53,6 +65,37 @@ class PipelineConfig(BaseSettings):
     spark_shuffle_partitions: int = Field(default=16, gt=0)
 
     seed: int = 42
+
+    # Modelagem (spec 02). Split treino/validação é por `campaign_wave` (rank
+    # discreto do received_time, não uma data): ondas < cutoff treinam, ondas
+    # >= cutoff validam — nunca split aleatório (REQ-201 NFR, T-202).
+    validation_wave_cutoff: int = Field(default=4, gt=0)
+
+    # Hiperparâmetros do baseline preditivo (REQ-201). LGBM trata nulos
+    # nativamente; a lista fica pequena porque o objetivo é âncora, não tuning.
+    lgbm_n_estimators: int = Field(default=200, gt=0)
+    lgbm_max_depth: int = Field(default=-1)
+    lgbm_learning_rate: float = Field(default=0.05, gt=0)
+    logit_max_iter: int = Field(default=1000, gt=0)
+
+    # X-learner (REQ-202): hiperparâmetros dos regressores de estágio (CausalML
+    # usa LGBM/sklearn por baixo; expostos aqui para não hardcode em src/).
+    xlearner_n_estimators: int = Field(default=200, gt=0)
+    xlearner_max_depth: int = Field(default=-1)
+    xlearner_learning_rate: float = Field(default=0.05, gt=0)
+
+    # Avaliação offline (REQ-206, REQ-207).
+    ipw_min_propensity: float = Field(default=1e-3, gt=0, lt=1)
+    ipw_confidence_level: float = Field(default=0.95, gt=0, lt=1)
+
+    # Dimensionamento do próximo A/B (REQ-211): potência e nível de teste.
+    ab_test_power: float = Field(default=0.8, gt=0, lt=1)
+    ab_test_alpha: float = Field(default=0.05, gt=0, lt=1)
+
+    # Tracking de experimentos (REQ-209): SQLite local, sem servidor — MLflow
+    # 3.x descontinuou o backend de arquivo puro (./mlruns) em favor de banco.
+    mlflow_tracking_uri: str = "sqlite:///mlflow.db"
+    mlflow_experiment_name: str = "ifood-uplift"
 
     model_config = {"frozen": True, "yaml_file": DEFAULT_CONFIG_PATH}
 
@@ -62,6 +105,10 @@ class PipelineConfig(BaseSettings):
             raise ValueError("smd_threshold deve ser > 0")
         if self.n_campaign_waves <= 0:
             raise ValueError("n_campaign_waves deve ser > 0")
+        if self.cluster_k_max <= self.cluster_k_min:
+            raise ValueError("cluster_k_max deve ser > cluster_k_min")
+        if self.validation_wave_cutoff >= self.n_campaign_waves:
+            raise ValueError("validation_wave_cutoff deve ser < n_campaign_waves")
         return self
 
     @property

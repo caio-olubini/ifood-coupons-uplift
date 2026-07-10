@@ -6,7 +6,7 @@
 ---
 
 ## T-201 — Config de modelagem
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-210
 - **Depends on:** T-101 (config base da spec 01)
 - **Files:** `src/config.py`, `tests/test_config_model.py`
@@ -15,7 +15,7 @@
 - **Accept:** T-config-modelagem passa — custo/hiperparâmetro inválido falha antes do treino.
 
 ## T-202 — Split temporal
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-201 (NFR de validação)
 - **Depends on:** T-201
 - **Files:** `src/split.py`, `tests/test_split.py`
@@ -23,7 +23,7 @@
 - **Accept:** T-split-temporal passa — split que vaza cliente ou inverte ordem é rejeitado.
 
 ## T-203 — Baseline preditivo
-- **Status:** [ ]
+- **Status:** [x]
 - **Satisfies:** REQ-201
 - **Depends on:** T-202
 - **Files:** `src/model_baseline.py`, `src/tracking.py`
@@ -31,21 +31,30 @@
 - **Accept:** LGBM ≥ logística na métrica reportada; ambos com run MLflow.
 
 ## T-204 — X-learner
-- **Status:** [ ]
+- **Status:** [!] — implementado, mas **não satisfaz REQ-202** sobre o dado real.
 - **Satisfies:** REQ-202
 - **Depends on:** T-202
 - **Files:** `src/uplift.py`, `tests/test_uplift.py`
 - **Do:** X-learner (CausalML; fallback scikit-uplift) com `treatment`=viu, `converted`;
   saída uplift por cliente × tipo.
 - **Accept:** T-uplift-surething e T-xlearner-grupos passam.
+- **Bloqueio:** com `treatment`=viu e `converted` (influence-aware), G3 força
+  `converted=0` em todo o controle ⇒ μ₀ ≡ 0 ⇒ τ ≡ μ₁. O uplift não é causal (45,8 p.p.
+  contra teto bruto confundido de 8,8 p.p.). Ver nota em `spec.md` REQ-202 e
+  `notebooks/2_modeling.ipynb` §3.2–3.5. **T-uplift-surething passou por acidente**: a
+  fixture sintética gera `converted` independente de `treatment`, permitindo μ₀ > 0 —
+  um mundo que o pipeline não produz. Desbloquear exige decisão de contrato
+  (tratamento = recebeu, ou outcome = `window_spend`), não conserto em código.
 
 ## T-205 — Avaliação de uplift
-- **Status:** [ ]
+- **Status:** [x] — mecânica correta; **o número que produz está contaminado** por T-204.
 - **Satisfies:** REQ-203
 - **Depends on:** T-204
 - **Files:** `src/uplift_eval.py`, `src/viz.py`
 - **Do:** Qini/AUUC; curva Qini no tema executivo.
 - **Accept:** Qini/AUUC reportado; curva renderiza no tema.
+- **Nota:** Qini AUC = 0,548 no holdout reflete μ₀ ≡ 0 (ordenar por τ ≡ ordenar por μ₁,
+  e `converted`=0 em todo o controle), não capacidade de ordenar efeito incremental.
 
 ## T-206 — Política sensível a custo
 - **Status:** [ ]

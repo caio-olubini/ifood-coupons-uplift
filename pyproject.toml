@@ -13,6 +13,8 @@ dependencies = [
     "pydantic>=2.7",
     "pydantic-settings[yaml]>=2.2",
     "plotly>=5.22",
+    "mlflow>=3.14.0",
+    "scikit-uplift>=0.5.1",
 ]
 
 [dependency-groups]
