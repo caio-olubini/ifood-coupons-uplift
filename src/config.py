@@ -88,6 +88,13 @@ class PipelineConfig(BaseSettings):
     ipw_min_propensity: float = Field(default=1e-3, gt=0, lt=1)
     ipw_confidence_level: float = Field(default=0.95, gt=0, lt=1)
 
+    # Teste de placebo por permutação (REQ-212): réplicas do embaralhamento e o
+    # percentil da nula que o Qini real precisa superar. `placebo_confidence_level`
+    # é o mesmo cálculo do intervalo de confiança do Qini — reuso de infraestrutura,
+    # não coincidência (ver `uplift_eval.placebo_test`).
+    placebo_n_permutations: int = Field(default=20, gt=0)
+    placebo_confidence_level: float = Field(default=0.95, gt=0, lt=1)
+
     # Dimensionamento do próximo A/B (REQ-211): potência e nível de teste.
     ab_test_power: float = Field(default=0.8, gt=0, lt=1)
     ab_test_alpha: float = Field(default=0.05, gt=0, lt=1)

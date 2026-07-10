@@ -78,32 +78,16 @@ def test_permutacao_mantem_features_e_y_intocados():
     pd.testing.assert_series_equal(resultado["hist_spend_total"], df["hist_spend_total"])
 
 
-def _synthetic_heterogeneous_effect(n=2000, seed=3, n_waves=6):
-    """Fixture dedicada com efeito **heterogêneo** e forte: só clientes de
-    `hist_spend_total` alto respondem à view. `synthetic_processed` planta um
-    efeito homogêneo pequeno e não garante Qini real > placebo em `n` moderado
-    — aqui o sinal é grande e concentrado de propósito, para o teste de aceite
-    de REQ-212 não depender de sorte de seed.
-    """
-    df = synthetic_processed(n=n, seed=seed, n_waves=n_waves)
-    responde = df["hist_spend_total"] > df["hist_spend_total"].median()
-    p_convert = np.where(
-        responde, np.where(df["treatment"] == 1, 0.85, 0.15), 0.20
-    )
-    rng = np.random.default_rng(seed)
-    df["converted"] = rng.binomial(1, p_convert).astype("int32")
-    return df
-
-
 def test_qini_real_supera_o_limiar_da_nula_quando_ha_sinal_plantado():
-    """Aceite de REQ-212: com efeito heterogêneo real (só metade dos clientes
-    responde à view), o Qini real deve furar o percentil da distribuição nula.
+    """Aceite de REQ-212: com sinal real plantado (a fixture já planta
+    `converted` correlacionado a `treatment` e `hist_spend_total`), o Qini real
+    deve furar o percentil da distribuição nula.
     """
-    df = _synthetic_heterogeneous_effect()
+    df = synthetic_processed(n=1200, seed=3)
     train_df = df[df["campaign_wave"] < 4].reset_index(drop=True)
     holdout_df = df[df["campaign_wave"] >= 4].reset_index(drop=True)
 
-    cfg = load(xlearner_n_estimators=50, placebo_n_permutations=8)
+    cfg = load(xlearner_n_estimators=30, placebo_n_permutations=8)
 
     from src.uplift import fit_xlearner, predict
 

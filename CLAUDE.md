@@ -65,8 +65,9 @@ Mudança no contrato é mudança de interface — atualize as specs, não só o 
 As garantias **G1–G10** são invariantes testados; se violados, quebram o projeto
 em silêncio. Cada uma tem teste dedicado em `tests/`:
 
-- **G1** grão único · **G2** sem leakage temporal · **G3** label exige view ·
-  **G4** conversão pós-view e dentro da validade · **G5** informational sem
+- **G1** grão único · **G2** sem leakage temporal · **G3** label **não** exige view
+  (o controle converte — ver é o tratamento, não o rótulo) · **G4** conversão dentro
+  da validade · **G5** informational sem
   `offer completed` · **G6** custo coerente · **G7** sentinela tratada ·
   **G8** sem nulo em coluna não-nullable · **G9** exposição exclusiva (uma view
   física marca no máximo um recebimento) · **G10** conversão atinge o gasto
@@ -95,7 +96,9 @@ transações na janela); ao mexer no pipeline, valide também no notebook.
   qualifica a leitura causal, nunca altera o estimador de uplift.
 - **Toda taxa nomeia seu denominador**: `taxa_conversao` (sobre recebidos) e
   `taxa_conversao_vistos` (sobre vistos) são números diferentes e vivem lado a
-  lado. Vale `taxa_conversao = taxa_view × taxa_conversao_vistos` (G3).
+  lado. A identidade `taxa_conversao = taxa_view × taxa_conversao_vistos`
+  **não vale mais** desde a mudança de G3 (0,4458 contra 0,3522): quem não viu
+  também converte, e essa massa é exatamente o grupo de controle.
 - **Divergência entre premissa e dado se registra, não se conserta em código**:
   o número medido vai para o notebook e para a spec; o código só muda por
   decisão de contrato.
@@ -107,34 +110,55 @@ Implementado e testado (82 testes verdes): T-101 a T-112 — pipeline completo
 tema de figuras, EDA, balanço de covariáveis e segmentação K-Means. Ver
 `specification/tasks.md` para o board.
 
-Spec 02 (modelagem, `specification/02-modeling/`) em andamento — T-201 a T-205
-implementados (103 testes verdes no total): config de modelagem estendida, split
-temporal por `campaign_wave` (`src/split.py`), baseline preditivo logística+LGBM
-com tracking MLflow (`src/model_baseline.py`, `src/tracking.py`), X-learner por
-`offer_type` (`src/uplift.py`) e avaliação Qini/AUUC (`src/uplift_eval.py`, via
-`sklift`). `notebooks/2_modeling.ipynb` roda tudo de ponta a ponta sobre o dado
-real e cresce seção a seção com as próximas tasks. `auc_lgbm=0.82` supera
-`auc_logit=0.75` (T-203 ok).
+Spec 02 (modelagem, `specification/02-modeling/`) em andamento — T-201 a T-207 e
+T-212 implementados (126 testes verdes no total): config de modelagem estendida,
+split temporal por `campaign_wave` (`src/split.py`), baseline preditivo
+logística+LGBM com tracking MLflow (`src/model_baseline.py`, `src/tracking.py`),
+X-learner por `offer_type` (`src/uplift.py`), avaliação Qini/AUUC
+(`src/uplift_eval.py`, via `sklift`), teste de placebo por permutação
+(`src/uplift_eval.py`, REQ-212) e política sensível a custo + três baselines
+(`src/policy.py`). `notebooks/2_modeling.ipynb` roda tudo de ponta a ponta sobre o
+dado real e cresce seção a seção com as próximas tasks. `auc_lgbm=0.83` supera
+`auc_logit=0.73` (T-203 ok).
 
-**T-204 está BLOQUEADA `[!]` — o uplift atual não é causal.** `G3` define
-`converted=1` ⇒ houve view, e `treatment=1` ⇔ viu. Logo `treatment=0 ⇒
-converted=0` **por construção do label**: o controle tem zero outcomes positivos
-em 21.623 linhas. Portanto μ₀ ≡ 0 e τ = μ₁ − μ₀ degenera em **τ ≡ μ₁** — o
-"uplift" é a taxa de conversão prevista dos tratados. Medido: 45,8 p.p. contra
-uma diferença bruta *já confundida* de 8,8 p.p. (`eda.window_spend`), isto é
-5,2× o teto que a docstring de `eda.naive_spend_lift` já fixava como limite
-superior. Qini AUC 0,548 é alto **pelo** defeito, não apesar dele. Diagnóstico
-em `notebooks/2_modeling.ipynb` §3.2–3.5 via `uplift.label_by_arm` e
-`uplift.stage_diagnostics`; travado por
-`test_label_impossible_in_control_degenerates_uplift_into_mu1`.
+**T-204 foi desbloqueada por decisão de contrato em G3.** O label deixou de
+exigir view: `converted` mede compra na validade atingindo o `min_value`, tenha o
+cliente visto ou não (`attribution.build_label`). Ver é o **tratamento**, não o
+rótulo. Com isso o controle converte — **33,0% (7.140/21.623)** contra 49,2% no
+tratado — μ₀ ∈ [0,36; 0,44] por tipo, e τ = μ₁ − μ₀ voltou a ser um efeito:
+**4,7 p.p.** (bogo), 6,4 (discount), 10,2 (informational). Qini AUC honesto:
+**0,038**, sobre 25.469 linhas.
 
-Cuidado com `test_uplift_surething_tends_to_zero`: passa num mundo que o
-pipeline não produz (a fixture gera `converted` independente de `treatment`,
-permitindo μ₀ > 0). Não é evidência de que REQ-202 está satisfeito. **Não siga
-para T-206 antes da decisão de contrato** (tratamento = recebeu, ou outcome =
-`window_spend`) — a nota completa está em `specification/02-modeling/spec.md`
-REQ-202. Uma política sobre τ ≡ μ₁ aloca por propensão a converter, que é
-exatamente o baseline *top-completion* que REQ-205 manda **bater**.
+Antes disso, μ₀ ≡ 0 forçava τ ≡ μ₁ (uplift "médio" 45,8 p.p., Qini 0,548 — altos
+**pelo** defeito). Se você achar o Qini de 0,038 baixo demais e suspeitar de bug:
+não é — o **teste de placebo** (T-212, REQ-212) confirma que não é ruído. Embaralhando
+`treatment` dentro de cada `offer_type` (preservando a proporção tratado/controle) e
+refitando o X-learner 20 vezes, a nula tem média ≈ 0 e desvio 0,011; o Qini real (0,0385)
+fura o percentil 95 (0,0162) com p-valor empírico 0/20. Baixo, mas real.
+`test_pipeline_label_admits_conversion_in_control` guarda o invariante e
+`test_label_impossible_in_control_degenerates_uplift_into_mu1` fixa a assinatura
+numérica da regressão.
+
+**Confundimento residual, registrado:** `treatment` = viu continua sendo escolha
+do cliente, não braço aleatorizado (o randomizado foi o *envio*, Premissa 4). O
+uplift é causal **sob ignorabilidade condicional às features**, não por desenho.
+A mudança de G3 não resolveu isso, e nenhum dos caminhos que a spec listava
+resolvia.
+
+`uplift.predict` devolve o grão completo `(account_id, offer_id, received_time)`
+na ordem da entrada. Sem `received_time` a chave não é única (mesma oferta em
+duas ondas) e o join do notebook inflava o holdout de 25.469 para 27.365 linhas —
+todo Qini reportado antes desta correção estava contaminado.
+
+A política (`src/policy.py`, REQ-204) trata receita como **incremental**
+(`uplift × receita_por_conversão`) e custo como **total**
+(`P(converte|tratado) × discount_value`): o desconto é debitado em toda conversão
+da oferta, causada ou não. O custo é por `offer_id` (catálogo), não por
+`offer_type` — o `plan.md` dizia o contrário e foi corrigido. `informational` tem
+desconto 0, logo custo esperado 0: é a alavanca de graça, e a política a acha sem
+regra especial. No holdout ela recusa envio a 4.636 de 15.919 clientes (29,1%) e
+sobe o lucro esperado de R$ 2,52 para R$ 3,50 por cliente. `policy_send_all`
+carrega lucro negativo de propósito — é o custo do status quo.
 
 O X-learner exige propensity fixa explícita (taxa de view observada por
 `offer_type`, não estimada) porque o `LogisticRegressionCV` default do CausalML
@@ -142,9 +166,12 @@ não tolera os nulos legítimos de G8 — bug que só apareceu ao rodar sobre o 
 real, pois a fixture sintética original não tinha nulo (ver
 `test_nullable_contract_columns_do_not_break_fit_or_predict`).
 
-**Os notebooks precisam ser re-executados após G10**: os números impressos em
-`1_eda.ipynb` (funil, conversão por onda/segmento, custo, `paid_below_minimum`) são
-pré-G10. `paid_below_minimum` agora é auditoria — deve dar zero, não um achado.
+**Os notebooks precisam ser re-executados após G10 e a mudança de G3**: os números
+impressos em `1_eda.ipynb` (funil, conversão por onda/segmento, custo,
+`paid_below_minimum`) são pré-G10. `paid_below_minimum` agora é auditoria — deve dar
+zero, não um achado. Com o novo G3 o funil também muda: `converted` não é mais um
+subconjunto de quem viu, então "conversão sobre vistos" deixou de conter toda a
+conversão, e `0_pipeline_audit.ipynb` precisa reprovar G3/G4 na forma nova.
 
 `notebooks/0_pipeline_audit.ipynb` **prova** as garantias G1–G10 e os REQ-101…110 sobre o
 dado real: 57 verificações, cada uma um `assert` sobre o DataFrame completo — nenhuma

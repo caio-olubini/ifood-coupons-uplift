@@ -55,30 +55,30 @@ Acceptance:
 - GIVEN um cliente sure thing (μ₀ já alto) THEN o uplift estimado tende a zero.
 - GIVEN a saída THEN há uma estimativa de uplift por par cliente × tipo de oferta.
 
-> **BLOQUEADO — o par (`treatment`, `converted`) não estima efeito causal.**
-> `G3` do contrato define `converted=1` ⇒ houve `offer viewed`, e `treatment=1` ⇔ viu.
-> Logo `treatment=0 ⇒ converted=0` **por construção do label**: o controle não tem
-> nenhum outcome positivo (medido: 0 em 21.623 linhas, nos três `offer_type`).
-> Consequência: μ₀ ≡ 0, e τ(x) = μ₁(x) − μ₀(x) degenera em τ ≡ μ₁ — o "uplift" é a
-> taxa de conversão prevista dos tratados, não um efeito incremental.
+> **Resolvido por decisão de contrato (G3).** O label deixou de exigir view: `converted`
+> mede compra na validade atingindo o `min_value`, tenha o cliente visto a oferta ou não.
+> Ver é o *tratamento*, não o rótulo. Com isso o controle tem outcome positivo — 33,0%
+> (7.140/21.623) contra 49,2% no tratado — e μ₀ > 0 em todos os `offer_type`
+> (μ₀ ∈ [0,36; 0,44] no holdout). O X-learner volta a estimar τ = μ₁ − μ₀ de fato.
 >
-> O primeiro critério de aceite é **inatingível como escrito**: μ₀ nunca pode ser
-> "já alto", pois a Premissa 2 joga o *sure thing* (completou sem ver) para fora do
-> label. Medido no holdout: uplift médio 45,8 p.p. contra uma diferença bruta e
-> ainda confundida de 8,8 p.p. (`eda.window_spend`) — 5,2× o teto que
-> `eda.naive_spend_lift` já documentava como limite superior.
+> Antes da correção, `converted=1` implicava view, o controle não tinha nenhum outcome
+> positivo, μ₀ ≡ 0 e τ degenerava em μ₁ (uplift "médio" de 45,8 p.p., Qini 0,548 — altos
+> **pelo** defeito). Depois: uplift médio de 4,7 p.p. (bogo), 6,4 (discount) e 10,2
+> (informational), Qini AUC 0,0385. O número menor é o honesto — e o teste de placebo
+> (REQ-212) confirma que não é ruído: a distribuição nula (`treatment` embaralhado dentro
+> de cada `offer_type`, 20 réplicas) tem média ≈ 0 e desvio 0,011; o Qini real fura o
+> percentil 95 (0,0162) com p-valor empírico 0/20.
+> `test_pipeline_label_admits_conversion_in_control` guarda o invariante;
+> `test_label_impossible_in_control_degenerates_uplift_into_mu1` fixa a assinatura
+> numérica da regressão.
 >
-> Evidência reprodutível em `notebooks/2_modeling.ipynb` §3.2–3.5
-> (`uplift.label_by_arm`, `uplift.stage_diagnostics`). REQ-203 a REQ-208 herdam a
-> contaminação enquanto isto não for resolvido: uma política sobre τ ≡ μ₁ aloca por
-> propensão a converter, que é exatamente o baseline *top-completion* de REQ-205.
->
-> Resolver exige **decisão de contrato**, não correção de código:
-> 1. **Tratamento = recebeu** (o braço de fato aleatorizado, Premissa 4). Mas não há
->    controle "não recebeu nada" no dataset; a comparação vira entre tipos de oferta.
-> 2. **Outcome = gasto na janela** (`window_spend`, visto ou não). Admite μ₀ > 0, mas
->    mantém `treatment` = viu, que não é aleatorizado — o uplift sai confundido pela
->    auto-seleção de quem abre e exige premissa causal adicional.
+> **Confundimento residual, registrado, não resolvido:** `treatment` = viu a oferta
+> continua sendo **escolha do cliente**, não braço aleatorizado (o que foi randomizado é o
+> *envio*, Premissa 4). Quem abre a oferta já tende a ser mais ativo, e essa auto-seleção
+> entra na estimativa. O uplift aqui é causal **sob a premissa de ignorabilidade
+> condicional às features** `hist_*`/perfil — não por desenho experimental. Leia o número
+> com essa qualificação; a Premissa 8 (positividade) segue valendo para "não enviar a
+> ninguém".
 
 ### REQ-203 — Métrica de uplift
 WHEN um modelo de uplift é avaliado, the system SHALL usar Qini/AUUC, não métricas de
@@ -86,6 +86,28 @@ classificação, para seleção e comparação.
 
 Acceptance:
 - GIVEN dois modelos de uplift THEN a escolha se dá por Qini/AUUC reportado.
+
+### REQ-212 — Teste de placebo por permutação
+WHEN o Qini do modelo de uplift é reportado, the system SHALL testá-lo contra uma
+distribuição nula obtida embaralhando `treatment` **dentro de cada `offer_type`** e
+**preservando a proporção tratado/controle** do grupo, mantendo `X` (features) e `y`
+(`converted`) fixos. O Qini real deve exceder o percentil `cfg.placebo_confidence_level`
+da distribuição nula (N réplicas, `cfg.placebo_n_permutations`, sementes distintas).
+
+Um embaralhamento global de `treatment` mudaria a razão tratado/controle por
+`offer_type`, derrubando o Qini nulo por um motivo diferente do que o teste quer
+isolar (se o modelo aprendeu efeito real, não composição de grupo).
+
+A mesma distribuição nula é o intervalo de confiança do Qini reportado em REQ-203: não
+são dois cálculos, é um só lido de duas formas — o percentil que o Qini real precisa
+superar (significância) e a dispersão da nula (incerteza do número).
+
+Acceptance:
+- GIVEN o Qini real e N réplicas de placebo THEN o Qini real está acima do percentil
+  `cfg.placebo_confidence_level` da distribuição nula, ou o relatório declara que o
+  modelo não passou no placebo.
+- GIVEN uma permutação THEN a proporção tratado/controle de cada `offer_type` é
+  idêntica à original.
 
 ### REQ-204 — Política sensível a custo
 WHEN a alocação é decidida, the system SHALL escolher, por cliente, a oferta (ou "não enviar")

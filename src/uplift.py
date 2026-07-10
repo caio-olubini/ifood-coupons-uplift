@@ -35,6 +35,10 @@ TREATMENT_COLUMN = "treatment"
 OUTCOME_COLUMN = "converted"
 OFFER_TYPE_COLUMN = "offer_type"
 
+#: Grão do contrato (`specification/schema-processed.md`). `offer_id` sozinho não
+#: identifica o recebimento: a mesma oferta chega ao mesmo cliente em ondas distintas.
+GRAIN_COLUMNS = ["account_id", "offer_id", "received_time"]
+
 # offer_type é o eixo de estratificação (um modelo por tipo); não entra como
 # feature dentro de cada modelo — seria constante no grupo.
 _XLEARNER_FEATURES = [c for c in FEATURE_COLUMNS if c != OFFER_TYPE_COLUMN]
@@ -90,24 +94,23 @@ def fit_xlearner(df: pd.DataFrame, cfg: PipelineConfig) -> dict[str, BaseXRegres
 def predict(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.DataFrame:
     """Uplift por linha, usando o modelo do `offer_type` daquela linha.
 
-    Retorna `[account_id, offer_id, offer_type, uplift]`, alinhado ao índice
-    de `df` (uma estimativa por par cliente × oferta recebida — REQ-202).
+    Retorna `[account_id, offer_id, received_time, offer_type, uplift]` **na
+    mesma ordem de linha de `df`**, uma estimativa por recebimento (REQ-202).
+
+    `received_time` faz parte do grão do contrato e vai junto: um cliente pode
+    receber a mesma oferta em duas ondas, então `(account_id, offer_id,
+    offer_type)` **não** é chave única no dado real — juntar por ela produz um
+    produto cartesiano silencioso (1.896 linhas do holdout têm grão duplicado).
+    A ordem preservada permite atribuir a coluna direto, sem join nenhum.
     """
-    parts = []
+    uplift = pd.Series(index=df.index, dtype=float)
     for offer_type, group in df.groupby(OFFER_TYPE_COLUMN):
         model = models[offer_type]
-        X = _design_matrix(group)
-        treatment = group[TREATMENT_COLUMN].to_numpy()
-        p = _fixed_propensity(treatment)
-        te = model.predict(X=X, p=p)
-        uplift = te[:, 0] if te.ndim == 2 else te.ravel()
-        parts.append(pd.DataFrame({
-            "account_id": group["account_id"].to_numpy(),
-            "offer_id": group["offer_id"].to_numpy(),
-            "offer_type": offer_type,
-            "uplift": uplift,
-        }))
-    return pd.concat(parts, ignore_index=True)
+        p = _fixed_propensity(group[TREATMENT_COLUMN].to_numpy())
+        te = model.predict(X=_design_matrix(group), p=p)
+        uplift.loc[group.index] = te[:, 0] if te.ndim == 2 else te.ravel()
+
+    return df[[*GRAIN_COLUMNS, OFFER_TYPE_COLUMN]].assign(uplift=uplift)
 
 
 # --- Diagnóstico: de onde vem o número de uplift -------------------------------

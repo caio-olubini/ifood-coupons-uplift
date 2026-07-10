@@ -39,3 +39,22 @@ def test_train_and_log_creates_mlflow_run(tmp_path):
     runs = mlflow.search_runs(experiment_ids=[experiment.experiment_id])
     assert len(runs) == 1
     assert "metrics.auc_lgbm" in runs.columns
+
+
+def test_predict_conversion_probability_is_mu1_aligned_to_the_input_index():
+    """μ₁ por linha, no índice de entrada — a política o consome no termo de custo
+    e o baseline top-completion aloca por ele (REQ-205).
+    """
+    from src.model_baseline import predict_conversion_probability
+
+    train_df = synthetic_processed(n=300, seed=11)
+    holdout_df = synthetic_processed(n=120, seed=12)
+    holdout_df.index = range(1000, 1000 + len(holdout_df))  # índice não trivial
+
+    cfg = load(lgbm_n_estimators=30)
+    _, lgbm, _ = train(train_df, holdout_df, cfg)
+    p = predict_conversion_probability(lgbm, holdout_df)
+
+    assert len(p) == len(holdout_df)
+    assert list(p.index) == list(holdout_df.index)
+    assert ((p >= 0.0) & (p <= 1.0)).all()

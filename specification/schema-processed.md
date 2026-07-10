@@ -37,8 +37,8 @@ auditoria verifica a igualdade, não a assume.
 ### Label
 | Coluna | Tipo | Descrição |
 |---|---|---|
-| `converted` | int | 1 se conversão influence-aware (Premissa 2): vista E transação **após o view** dentro da validade; senão 0 |
-| `conversion_value` | double | soma das transações atribuídas (pós-view, na validade); 0 se não converteu |
+| `converted` | int | 1 se há transação atribuída (na validade, `amount ≥ min_value`); senão 0. **Independe do view** — ver é o tratamento, não o rótulo (G3) |
+| `conversion_value` | double | soma das transações atribuídas (na validade); 0 se não converteu |
 | `reward_cost` | double | custo do desconto concedido (0 para informational e não-convertidos) |
 
 ### Features de cliente (do profile, tratando nulos)
@@ -92,15 +92,17 @@ da suíte de testes do pipeline.
 - **G1 — Grão único.** Zero duplicatas em `(account_id, offer_id, received_time)`.
 - **G2 — Sem leakage temporal.** Nenhuma feature `hist_*` incorpora evento com
   `time > received_time` da própria linha.
-- **G3 — Label exige view.** `converted=1` ⇒ existe `offer viewed` com
-  `view_time ≥ received_time` e `view_time ≤ received_time + duration`.
-- **G4 — Conversão é pós-view e dentro da validade (influence-aware estrito).**
-  `converted=1` ⇒ a transação atribuída ocorre em `[view_time, received_time + duration]`,
-  isto é, **depois do view** e dentro da validade. Uma compra na janela mas
-  anterior ao view não pode ter sido induzida pela visualização, logo não conta
-  como conversão nem entra em `conversion_value`.
-- **G5 — Informational sem completed.** Conversão de informational vem de transação em
-  janela pós-view, nunca de evento `offer completed` (que não existe para esse tipo).
+- **G3 — Label não exige view; o controle é observável.** `converted=1` ⇔ existe transação
+  atribuída, e `treatment=0` (não viu) **pode** ter `converted=1`. Ver a oferta é o
+  *tratamento*, não o rótulo. Se o label exigisse view, todo o grupo de controle teria
+  `converted=0` por construção, μ₀ colapsaria em zero e o X-learner devolveria μ₁ no lugar
+  do efeito causal (τ ≡ μ₁). Medido no dado real: controle converte a 33,0%
+  (7.140/21.623), tratado a 49,2%.
+- **G4 — Conversão dentro da validade.** `converted=1` ⇒ a transação atribuída ocorre em
+  `[received_time, received_time + duration]`. A janela é a validade da oferta; o `view_time`
+  **não** a restringe (ver G3).
+- **G5 — Informational sem completed.** Conversão de informational vem de transação na janela
+  de validade, nunca de evento `offer completed` (que não existe para esse tipo).
 - **G6 — Custo coerente.** `reward_cost > 0` ⇒ `converted=1` e `offer_type ≠ informational`.
 - **G7 — Sentinela tratada.** `age` nunca vale 118; `identity_missing=1` ⇔ os três campos
   de perfil ausentes.

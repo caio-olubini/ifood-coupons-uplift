@@ -82,6 +82,17 @@ def train(
     return logit, lgbm, {"auc_logit": auc_logit, "auc_lgbm": auc_lgbm}
 
 
+def predict_conversion_probability(model: LGBMClassifier, df: pd.DataFrame) -> pd.Series:
+    """P(converted=1 | x) prevista pelo LGBM, alinhada ao índice de `df`.
+
+    É μ₁ — a propensão a converter —, não o uplift. Serve a dois consumidores:
+    o termo de custo da política (`policy.expected_net_profit`, onde o desconto
+    é debitado em toda conversão) e o baseline *top-completion* (REQ-205), que
+    aloca exatamente por este número e é o que a política precisa bater.
+    """
+    return pd.Series(model.predict_proba(_design_matrix(df))[:, 1], index=df.index)
+
+
 def train_and_log(
     train_df: pd.DataFrame, holdout_df: pd.DataFrame, cfg: PipelineConfig
 ) -> tuple[Pipeline, LGBMClassifier, dict[str, float]]:

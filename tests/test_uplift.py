@@ -70,8 +70,33 @@ def test_predict_returns_one_row_per_input_row():
     preds = predict(models, df)
 
     assert len(preds) == len(df)
-    assert set(preds.columns) == {"account_id", "offer_id", "offer_type", "uplift"}
+    assert set(preds.columns) == {"account_id", "offer_id", "received_time", "offer_type", "uplift"}
     assert preds["uplift"].notna().all()
+
+
+def test_predict_preserves_row_order_and_the_contract_grain():
+    """`predict` devolve o grão completo `(account_id, offer_id, received_time)`
+    na ordem de linha da entrada.
+
+    Sem `received_time` a chave não é única — a mesma oferta chega ao mesmo
+    cliente em ondas diferentes — e juntar o uplift ao holdout por
+    `(account_id, offer_id, offer_type)` vira produto cartesiano: no dado real
+    inflava 25.469 linhas para 27.365, contaminando o Qini. Sem a ordem
+    preservada, `groupby` reordenaria as linhas por `offer_type`.
+    """
+    df = synthetic_processed(n=300, seed=3)
+    # Mesmo cliente, mesma oferta, duas ondas: o grão só distingue por received_time.
+    df.loc[1, ["account_id", "offer_id", "offer_type"]] = df.loc[0, ["account_id", "offer_id", "offer_type"]].to_numpy()
+    df.loc[1, "received_time"] = df.loc[0, "received_time"] + 7.0
+
+    cfg = load(xlearner_n_estimators=30)
+    preds = predict(fit_xlearner(df, cfg), df)
+
+    assert len(preds) == len(df)
+    assert not preds.duplicated(["account_id", "offer_id", "received_time"]).any()
+    # Ordem de linha idêntica: dá para atribuir a coluna sem join.
+    pd.testing.assert_series_equal(preds["account_id"], df["account_id"])
+    pd.testing.assert_series_equal(preds["received_time"], df["received_time"])
 
 
 def test_nullable_contract_columns_do_not_break_fit_or_predict():

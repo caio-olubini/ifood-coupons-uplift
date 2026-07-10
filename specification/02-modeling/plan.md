@@ -19,7 +19,9 @@
 
 - **`src/model_baseline.py`** — logística e LGBM sob validação temporal (REQ-201).
 - **`src/uplift.py`** — X-learner via CausalML; saída uplift por cliente × tipo (REQ-202).
-- **`src/uplift_eval.py`** — Qini/AUUC (REQ-203).
+- **`src/uplift_eval.py`** — Qini/AUUC (REQ-203); teste de placebo por permutação
+  estratificada por `offer_type` (REQ-212) — mesma infraestrutura gera o intervalo de
+  confiança do Qini reportado.
 - **`src/policy.py`** — decisão `argmax(uplift_receita − custo)` incluindo nula (REQ-204);
   os três baselines (REQ-205).
 - **`src/offpolicy.py`** — IPW com propensity fixa; checagem de positividade (REQ-206, 207).
@@ -40,18 +42,25 @@ tabela/artefato MLflow.
 ```
 model_baseline.train(df, cfg) -> (logit, lgbm, metrics)     # validação temporal (REQ-201)
 uplift.fit_xlearner(df, cfg) -> model
-uplift.predict(model, df) -> DataFrame[account_id, offer_type, uplift]   # (REQ-202)
+uplift.predict(model, df) -> DataFrame[account_id, offer_id, received_time, offer_type, uplift]  # grão do contrato (REQ-202)
 uplift_eval.qini(pred, df) -> float                          # (REQ-203)
-policy.allocate(uplift_df, costs, cfg) -> DataFrame[account_id, chosen_action, net_profit]  # (REQ-204)
-policy.baselines(df, cfg) -> dict[name -> DataFrame]         # aleatória, todos, top-completion (REQ-205)
+uplift_eval.placebo_qini_distribution(train_df, holdout_df, cfg) -> np.ndarray  # nula, N réplicas (REQ-212)
+uplift_eval.placebo_test(qini_score, null_distribution, cfg) -> dict            # limiar, passou, p_value (REQ-212)
+policy.offer_economics(reference) -> DataFrame[offer_id, offer_type, revenue_per_conversion, discount_value]
+policy.expected_net_profit(uplift_df, economics, p_convert_treated) -> DataFrame[..., net_profit]
+policy.allocate(scored) -> DataFrame[account_id, chosen_action, expected_net_profit]  # inclui `nao_enviar` (REQ-204)
+policy.policy_random(reference, cfg) | policy_send_all(scored) | policy_top_completion(reference, p_convert)  # (REQ-205)
 offpolicy.ipw_value(policy_df, holdout, cfg) -> EvaluationResult   # propensity fixa (REQ-206)
 offpolicy.check_positivity(policy_df, holdout) -> bool       # (REQ-207)
 impact.to_currency(eval_result, cfg) -> (reais, interval)   # (REQ-208)
 impact.size_ab_test(variance, cfg) -> n_per_arm             # (REQ-211)
 ```
 
-Custos por tipo de oferta são campos da config, não constantes no `policy` — mudar custo é
-mudar config, não código.
+O custo do desconto **não** é um campo da config nem uma constante em `policy`: é o
+`discount_value` do catálogo de ofertas, por `offer_id` (duas ofertas do mesmo tipo têm
+descontos diferentes — 2, 3, 5 e 10 no dado real). `policy.offer_economics` o recupera do
+`reward_cost` gravado por `cost.add_reward_cost`. Ver a nota em `config.yaml`: se o custo
+um dia divergir do `discount_value`, aí sim vira parâmetro de config.
 
 ## Dependencies
 
@@ -79,6 +88,8 @@ mudar config, não código.
 - **T-xlearner-grupos** — μ₁ e μ₂ estágios treinam nos subconjuntos corretos (guarda a
   construção do X-learner, não só do T).
 - **T-config-modelagem** — custo/hiperparâmetro inválido na config falha antes do treino.
+- **T-placebo-permutacao** — embaralhamento preserva a proporção tratado/controle por
+  `offer_type`; Qini real supera o percentil da nula quando há efeito heterogêneo real.
 
 Fixtures sintéticas determinísticas desenhadas para a falha específica.
 
@@ -97,3 +108,4 @@ Fixtures sintéticas determinísticas desenhadas para a falha específica.
 | REQ-209 | `tracking` |
 | REQ-210 | `config` + T-config-modelagem |
 | REQ-211 | `impact.size_ab_test` |
+| REQ-212 | `uplift_eval.placebo_qini_distribution` + `placebo_test` + T-placebo-permutacao |
