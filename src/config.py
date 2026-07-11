@@ -94,6 +94,11 @@ class PipelineConfig(BaseSettings):
     # comandos produtivos que os wrappers habilitam.
     models_dir: Path = Path("models")
 
+    # Serving (`model predict`): budget default (nº de ações a recomendar) quando
+    # o CLI não recebe `--budget`. A restrição atual é uma oferta por cliente, então
+    # o budget é também o nº de clientes distintos atendidos.
+    predict_budget: int = Field(default=1000, gt=0)
+
     # Blend padrão do `BlendedUpliftModel` quando nenhum parâmetro é passado.
     # Os dois melhores blends medidos no holdout real (ver CLAUDE.md): λ=0,3
     # fixo e γ=1,0 dinâmico. `blend_mode` escolhe qual dos dois um blend sem

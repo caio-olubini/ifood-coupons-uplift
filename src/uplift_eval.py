@@ -226,3 +226,34 @@ def fig_qini_curves_by_strategy(curves: pd.DataFrame, theme: str = "light") -> g
             mode="lines", line=dict(color=cor, width=2.5),
         ))
     return viz.add_end_labels(fig, theme=theme)
+
+
+def fig_blend_importance(importance: pd.DataFrame, top: int = 15, theme: str = "light") -> go.Figure:
+    """Importância de features do blend: as três séries em barras horizontais.
+
+    `importance` é a saída de `BlendedUpliftModel.feature_importance` — colunas
+    `uplift` (causal, o que dirige o τ), `conversion` (preditiva, o que dirige a
+    conversão) e `combined` (a mistura que ranqueia). Mostra as `top` features por
+    `combined`; barras agrupadas deixam ler onde as duas fontes concordam e onde a
+    causal destaca uma feature que a preditiva ignora (ou vice-versa). Cada série
+    leva rótulo de legenda **e** cor distinta — a paleta validada não deixa a cor
+    sozinha identificar (ver `src/viz.py`).
+
+    Ordenado ascendente porque a barra horizontal do Plotly empilha de baixo para
+    cima: a feature mais importante fica no topo.
+    """
+    dados = importance.sort_values("combined", ascending=False).head(top).iloc[::-1]
+    fig = viz.figure(
+        "O que dirige o score do blend: efeito causal vs. propensão a converter",
+        f"Top {top} features por importância combinada. Causal = dirige o τ; conversão = dirige quem converte.",
+        theme=theme,
+        barmode="group",
+    )
+    cores = viz.palette(theme)
+    series = [("combined", "combinada"), ("uplift", "causal (uplift)"), ("conversion", "conversão")]
+    for i, (col, nome) in enumerate(series):
+        fig.add_trace(go.Bar(
+            y=dados.index, x=dados[col], name=nome, orientation="h",
+            marker_color=cores[i % len(cores)], marker_line_width=0,
+        ))
+    return fig

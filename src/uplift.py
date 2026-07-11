@@ -56,9 +56,18 @@ def fixed_propensity(treatment: np.ndarray) -> np.ndarray:
     """Propensity constante = taxa de view observada no grupo (Premissa 4: RCT,
     propensity conhecida, não estimada). Mesmo valor repetido por linha —
     CausalML espera um vetor do tamanho de `treatment`, não um escalar.
+
+    No serving (`src.serve`) todo o grupo entra com `treatment=1` (decidimos
+    **expor**, o view ainda não ocorreu), e `mean()` degeneraria em 1,0 — que o
+    CausalML rejeita (p ∈ (0,1) aberto). Quando o grupo é de um braço só, cai
+    para 0,5 (peso neutro entre os dois estimadores de CATE do X-learner); nos
+    casos reais (ajuste e holdout, com os dois braços presentes) `mean()` fica
+    intacto — mesmo número de antes, byte a byte.
     """
     rate = treatment.mean()
-    return np.full_like(treatment, fill_value=rate, dtype=float)
+    if rate <= 0.0 or rate >= 1.0:
+        rate = 0.5
+    return np.full(treatment.shape, fill_value=rate, dtype=float)
 
 
 def _make_learner(cfg: PipelineConfig) -> LGBMRegressor:
@@ -173,6 +182,63 @@ def predict_cate_uncertainty(models: dict[str, BaseXRegressor], df: pd.DataFrame
         uncertainty.loc[group.index] = np.abs(dhat_t[arm] - dhat_c[arm])
 
     return df[[*GRAIN_COLUMNS, OFFER_TYPE_COLUMN]].assign(uncertainty=uncertainty)
+
+
+def causal_importance(
+    models: dict[str, BaseXRegressor], df: pd.DataFrame, cfg: PipelineConfig
+) -> pd.Series:
+    """Importância **causal** das features: o que dirige o τ estimado, não o outcome.
+
+    Usa a API avançada do CausalML (`BaseXRegressor.get_importance`): para cada
+    `offer_type`, ajusta um meta-modelo `model_tau_feature` (LGBM, os
+    hiperparâmetros de estágio da config) sobre `X → τ̂(X)` e mede a importância
+    das features **nesse** meta-modelo. É a diferença que a instrução pede em
+    relação a `feature_importances_` cru: aqui a variável importa se explica o
+    *efeito da oferta*, não a propensão a converter.
+
+    `method='permutation'` em vez de `'auto'` para um report **suave e
+    estatisticamente coerente**: a importância é a queda média de acurácia ao
+    permutar cada coluna (grandeza comparável entre features e entre os dois
+    tipos de oferta), não o ganho de split cru (dependente da escala e da
+    cardinalidade de cada feature). Os dois grupos de `offer_type` são
+    reconciliados por **média ponderada pelo nº de linhas** — a importância
+    agregada reflete a composição real do holdout, não a média simples de dois
+    grupos de tamanhos desiguais. Normalizada para somar 1, para ser lida como
+    participação relativa.
+
+    Retorna uma `Series` indexada pelas features do X-learner (sem `offer_type`,
+    que é o eixo de estratificação), em ordem decrescente de importância.
+    """
+    features = _XLEARNER_FEATURES
+    total = pd.Series(0.0, index=features)
+    n_total = 0
+
+    for offer_type, group in df.groupby(OFFER_TYPE_COLUMN):
+        model = models[offer_type]
+        X = _design_matrix(group)
+        p = fixed_propensity(group[TREATMENT_COLUMN].to_numpy())
+        tau = model.predict(X=X, p=p)
+
+        imp = model.get_importance(
+            X=X,
+            tau=tau,
+            model_tau_feature=_make_learner(cfg),
+            features=np.array(features),
+            method="permutation",
+            random_state=cfg.seed,
+        )
+        # `get_importance` devolve {grupo_de_tratamento: Series}. Com um só braço
+        # de tratamento (view=1), há uma entrada; somamos ponderando por linhas.
+        (group_imp,) = imp.values()
+        # permutação pode dar importância negativa (feature que atrapalha o
+        # meta-modelo); piso em 0 antes de agregar — participação não é negativa.
+        group_imp = group_imp.reindex(features).fillna(0.0).clip(lower=0.0)
+        total = total + group_imp * len(group)
+        n_total += len(group)
+
+    mean_imp = total / n_total
+    normalized = mean_imp / mean_imp.sum() if mean_imp.sum() > 0 else mean_imp
+    return normalized.sort_values(ascending=False)
 
 
 def label_by_arm(df: pd.DataFrame) -> pd.DataFrame:

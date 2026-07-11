@@ -20,6 +20,10 @@ uv run pytest tests/test_leakage.py -q   # um arquivo só
 uv run python -m src.pipeline   # bruto → data/processed/ (valida o contrato antes de escrever)
 uv run python -m src.pipeline --config outra.yaml
 
+uv run python -m src.cli train                       # ajusta o BlendedUpliftModel e serializa em models_dir
+uv run python -m src.cli predict --budget 5000       # recomenda top-N ações (uma oferta por cliente)
+uv run python -m src.cli predict --out recs.csv      # escreve o CSV em vez de imprimir
+
 # Executar um notebook de ponta a ponta (nbclient já está no grupo dev):
 uv run python -c "import nbformat; from nbclient import NotebookClient; \
 nb=nbformat.read('notebooks/0_pipeline_audit.ipynb',as_version=4); \
@@ -44,6 +48,8 @@ Fluxo em estágios, cada um uma função pura testável em `src/`. Notebooks só
 | `src/cost.py` | `add_reward_cost`: `reward_cost` = `discount_value` do catálogo em conversões bogo/discount; 0 caso contrário (REQ-106, G6). Correto porque G10 garante que toda conversão atingiu o `min_value`. |
 | `src/contract.py` | Encarnação executável do contrato (REQ-107): `StructType` **e** modelo Pydantic gerados de uma única lista `_COLUMNS` — divergir é impossível. `enforce_schema`, `assert_schema`, `assert_no_unexpected_nulls` (G8), `validate_sample`. |
 | `src/pipeline.py` | Orquestra bruto→processado: `assemble_processed` (junta perfil, deriva `treatment` e `campaign_wave`, projeta no contrato), `validate`, `run` (escreve `data/processed/`), `build_spark(cfg)` e o entrypoint CLI. |
+| `src/serve.py` | Serving do `model predict`: `build_scoring_frame` monta a matriz **clientes × ofertas ativas** as-of um instante de decisão, reusando as funções puras do pipeline (features as-of a decisão, sem leakage/fabricação); `recommend` aplica "uma oferta por cliente" + top-N por budget. |
+| `src/cli.py` | CLI de produto `train`/`predict`: `train` ajusta o `BlendedUpliftModel` no split de treino e serializa; `predict` monta o scoring de serve, pontua e devolve as top-N ações. Só orquestra `src/models.py`+`src/serve.py`+`src/split.py`. |
 | `src/viz.py` | Tema Plotly executivo único (REQ-108): paleta categórica validada por script (banda OKLCH, piso de croma, separação CVD, contraste — ver docstring), light/dark, mais `SEQUENTIAL`/`DIVERGING_*` para heatmap. `figure()`, `add_end_labels`, `add_bar_labels`. Nenhuma figura define estilo ad hoc. |
 | `src/eda.py` | Funções da EDA (REQ-108), balanço de covariáveis (REQ-109) e segmentação K-Means (REQ-111): cada uma agrega no Spark e devolve pandas pequeno, mais o construtor de figura correspondente. `covariate_balance` (viu/não-viu, o que o REQ-109 pede) e `assignment_balance` (entre ofertas recebidas, o que de fato verifica a Premissa 4); `numeric_profile`/`categorical_profile`/`correlation_matrix`/`sanity_checks` são o olhar univariado; `response_funnel` e `segment_response` sempre com os dois denominadores; `cluster_matrix` → `cluster_scan` → `fit_clusters` → `assign_segments` é a segmentação; `window_spend`+`naive_spend_lift` dão a diferença bruta (confundida) visto × não-visto. |
 
@@ -142,6 +148,34 @@ incremental por budget top-N** (`src/gaincurve.py`, REQ-206/T-208).
 `notebooks/2_modeling.ipynb` roda tudo de ponta a ponta sobre o dado real.
 `auc_lgbm=0.85` supera `auc_logit=0.80` (T-203 ok).
 
+**CLI de produto `train`/`predict` (`src/cli.py`, `src/serve.py`) — 2026-07-11,
+por pedido do usuário.** `python -m src.cli train` ajusta o `BlendedUpliftModel`
+da config no lado de treino do split temporal (sem `informational`) e o serializa
+em `cfg.models_dir` — mesma preparação de dado do notebook, sobre os wrappers de
+`src/models.py`, sem número novo. `python -m src.cli predict` é o **serve de
+verdade, não predição sobre a base histórica** (decisão explícita do usuário:
+"predict na base histórica não é produto"): monta a matriz de scoring
+**clientes × ofertas ativas** as-of um instante de decisão (`--decision-time`,
+default = fim do histórico), pontua com o modelo salvo e devolve as top-N ações.
+`src/serve.build_scoring_frame` reusa **as mesmas** funções puras do pipeline
+(`clean.normalize_profile`, `features.build`, `cost.add_reward_cost`,
+`contract.enforce_schema`) — o grão de scoring é o produto (clientes × ofertas
+ativas) com `received_time = t_decisão`, e o anti-leakage G2 (`event_time <
+received_time`) passa a significar "todo o histórico até a decisão": features
+as-of a decisão, sem fabricar nada. Label/onda entram como sentinela só para o
+contrato fechar (`_SENTINEL_LABEL_VALUES`); a matriz de design do modelo as
+ignora (`NON_FEATURE_COLUMNS`), então nunca alimentam o score. `treatment=1` é a
+suposição de serving (decidimos **expor**); como o grão fica todo num braço,
+`uplift.fixed_propensity` cai para 0,5 nesse caso degenerado (o CausalML rejeita
+p∈{0,1}) — nos casos reais (ajuste/holdout, dois braços) `mean()` fica intacto,
+número idêntico. `serve.recommend` aplica a restrição **uma oferta por cliente**:
+melhor oferta de cada `account_id` (maior score), depois top-N por budget
+(`cfg.predict_budget`, `--budget`) — N ações, N clientes distintos. Só ofertas
+de `MODELED_OFFER_TYPES` (bogo/discount) entram como ativas; o modelo não conhece
+`informational`. `test_serve.py` (5 testes) guarda os invariantes que quebram o
+predict em silêncio: uma oferta/cliente, corte por budget, melhor oferta/cliente,
+e o guard de propensity nos dois lados. Novo campo de config: `predict_budget`.
+
 **Wrappers de modelo (`src/models.py`) encapsulam treino+predição num objeto,
 como precursor dos comandos `model train`/`model predict` do CLI (2026-07-11,
 por pedido do usuário — puxar o projeto para o lado de produto/engenharia).**
@@ -159,11 +193,31 @@ fechando a fronteira treinar(escreve)→prever(lê). Novos campos de config:
 `models_dir`, `blend_mode`/`blend_lambda`/`blend_gamma` (o blend padrão sem
 argumentos: λ=0,3 fixo ou γ=1,0 dinâmico, os dois melhores do holdout real).
 Os wrappers **não reimplementam** nada — orquestram as funções puras de `src/`;
-`test_models.py` (7 testes) guarda o que quebra o CLI em silêncio: `from_config`
+`test_models.py` (10 testes) guarda o que quebra o CLI em silêncio: `from_config`
 lendo o hiperparâmetro certo, o blend não alterando a fórmula de `gaincurve`, e
 `save`/`load` prevendo/ranqueando idêntico. `notebooks/2_modeling.ipynb` puxa os
 modelos dos wrappers (`UpliftModel.from_config(cfg).fit`, os dois blends via
 `BlendedUpliftModel`) — números de §5 inalterados (drop-in numericamente exato).
+
+**Importância de variáveis nos wrappers (2026-07-11, por pedido do usuário).**
+Cada modelo devolve sua importância: `ConversionModel.feature_importance()` = ganho
+do LGBM de `converted` (preditiva, normalizada); `UpliftModel.feature_importance(df)`
+= importância **causal** via a API avançada do CausalML (`BaseXRegressor.get_importance`
+em `uplift.causal_importance`) — ajusta um meta-modelo `model_tau_feature` (LGBM) sobre
+o **τ estimado** e mede o que dirige o *efeito*, não o outcome, por **permutação**
+(grandeza comparável, report suave) e reconciliado entre os `offer_type` por média
+ponderada pelo nº de linhas, normalizado. `BlendedUpliftModel.feature_importance(df)`
+devolve as duas separadas **e** a `combined`, que espelha a álgebra do score: modo
+fixo `imp_causal + λ·imp_conversão`, dinâmico a mistura convexa com o **λ efetivo
+médio** (`_effective_lambda` = média do `lambda_local`) — as três somam 1. As duas
+importâncias vivem em índices ligeiramente diferentes (X-learner sem `offer_type`,
+seu eixo de estratificação; baseline com) e são realinhadas na união, `offer_type`
+com importância 0 no lado causal. `uplift_eval.fig_blend_importance` plota as três em
+barras horizontais agrupadas (top-N por `combined`). §8 do notebook mostra o modelo
+principal (`blend_fixo`, λ=0,3): `credit_card_limit`/`tenure_days` lideram, e a causal
+destaca `hist_time_view_to_conv`/`hist_offers_received_discount` acima do que a
+preditiva lhes dá. Três testes novos em `test_models.py` guardam a normalização/índice
+da causal e a coerência da `combined` com a fórmula do score (fixo e dinâmico).
 
 **Política sensível a custo, seus baselines e a calibração de magnitude foram
 removidas do projeto por decisão do usuário (2026-07-10).** `src/policy.py`

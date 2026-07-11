@@ -93,6 +93,55 @@ def test_blended_fixed_score_is_exactly_the_hybrid_formula():
     pd.testing.assert_series_equal(blend.score(df), esperado)
 
 
+def test_uplift_causal_importance_is_normalized_over_xlearner_features():
+    """A importância causal do X-learner soma 1 e é indexada pelas features do
+    X-learner (sem `offer_type`, o eixo de estratificação) — um report que não
+    normaliza ou vaza `offer_type` como feature interna está incoerente.
+    """
+    from src.uplift import _XLEARNER_FEATURES
+
+    df = _modeled(synthetic_processed(n=800, seed=5))
+    cfg = load(xlearner_n_estimators=40)
+    model = UpliftModel.from_config(cfg).fit(df)
+
+    imp = model.feature_importance(df)
+    assert set(imp.index) == set(_XLEARNER_FEATURES)
+    assert "offer_type" not in imp.index
+    assert imp.min() >= 0.0
+    np.testing.assert_allclose(imp.sum(), 1.0, rtol=1e-6)
+
+
+def test_blended_combined_importance_mirrors_the_fixed_score_algebra():
+    """A coluna `combined` do blend fixo tem de ser exatamente `imp_uplift +
+    λ·imp_conversion` renormalizado — a mesma álgebra do score que ranqueia. Se
+    a combinação divergir da fórmula do score, a importância do blend deixa de
+    significar o que o blend faz.
+    """
+    df = _modeled(synthetic_processed(n=800, seed=6))
+    cfg = load(xlearner_n_estimators=40)
+    blend = BlendedUpliftModel.from_config(cfg.model_copy(update={"blend_mode": "fixed", "blend_lambda": 0.3})).fit(df)
+
+    imp = blend.feature_importance(df)
+    esperado = imp["uplift"] + 0.3 * imp["conversion"]
+    esperado = esperado / esperado.sum()
+    pd.testing.assert_series_equal(imp["combined"], esperado, check_names=False)
+    np.testing.assert_allclose(imp[["uplift", "conversion", "combined"]].sum(), [1.0, 1.0, 1.0], rtol=1e-6)
+
+
+def test_blended_dynamic_effective_lambda_is_mean_local_lambda():
+    """No modo dinâmico o λ efetivo da combinação de importâncias é a média do
+    `lambda_local` do score — o λ constante que reproduz, em média, a mesma
+    mistura. Fixar outro λ tornaria a importância incoerente com o ranking.
+    """
+    df = _modeled(synthetic_processed(n=800, seed=7))
+    cfg = load(xlearner_n_estimators=40)
+    blend = BlendedUpliftModel.from_config(cfg.model_copy(update={"blend_mode": "dynamic", "blend_gamma": 1.0})).fit(df)
+
+    uncertainty = blend.uplift_model.predict_uncertainty(df)["uncertainty"]
+    lambda_local = (uncertainty / (uncertainty.max() + 1e-9)) ** 1.0
+    np.testing.assert_allclose(blend._effective_lambda(df), lambda_local.mean(), rtol=1e-9)
+
+
 def test_blended_from_config_reads_blend_defaults():
     """`from_config` deve materializar o blend padrão da config
     (`blend_mode`/`blend_lambda`/`blend_gamma`) — o default que `model predict`

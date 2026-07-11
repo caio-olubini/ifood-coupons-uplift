@@ -106,6 +106,22 @@ class ConversionModel:
             raise RuntimeError("ConversionModel não ajustado — chame fit() antes de predict_proba().")
         return model_baseline.predict_conversion_probability(self._model, df)
 
+    def feature_importance(self) -> pd.Series:
+        """Importância de features do LGBM de conversão (ganho), normalizada.
+
+        É a importância **preditiva** de `converted` — o que explica quem
+        converte, não o efeito da oferta (essa é a do `UpliftModel`). Ganho
+        (`importance_type='gain'`, default do LGBM) normalizado para somar 1,
+        indexado pelas features do baseline, em ordem decrescente. `offer_type`
+        aparece aqui (é feature do baseline), ao contrário do X-learner.
+        """
+        if self._model is None:
+            raise RuntimeError("ConversionModel não ajustado — chame fit() antes de feature_importance().")
+        imp = pd.Series(self._model.feature_importances_, index=model_baseline.FEATURE_COLUMNS, dtype=float)
+        total = imp.sum()
+        normalized = imp / total if total > 0 else imp
+        return normalized.sort_values(ascending=False)
+
 
 class UpliftModel:
     """X-learner de uplift por `offer_type`, empacotado (`src.uplift`).
@@ -171,6 +187,16 @@ class UpliftModel:
     def predict_uncertainty(self, df: pd.DataFrame) -> pd.DataFrame:
         """Incerteza da estimativa de τ por linha — peso do blend dinâmico."""
         return uplift.predict_cate_uncertainty(self.models, df)
+
+    def feature_importance(self, df: pd.DataFrame) -> pd.Series:
+        """Importância **causal** das features (o que dirige o τ), via `uplift`.
+
+        Delega a `uplift.causal_importance` — a API avançada do CausalML sobre um
+        meta-modelo do τ estimado, por permutação e reconciliada entre os tipos
+        de oferta (ver aquela docstring). `df` fornece as linhas onde o τ é
+        estimado e permutado; use o mesmo holdout da avaliação para coerência.
+        """
+        return uplift.causal_importance(self.models, df, self._as_config())
 
     def save(self, cfg: PipelineConfig) -> Path:
         return _save_pickle(self, cfg.models_dir / UPLIFT_MODEL_FILENAME)
@@ -258,6 +284,68 @@ class BlendedUpliftModel:
         `gaincurve`, para o resultado ser determinístico dada a mesma entrada.
         """
         return self.score(df).sort_values(ascending=False, kind="stable").index.to_numpy()
+
+    def _effective_lambda(self, df: pd.DataFrame) -> float:
+        """Peso λ efetivo do blend, para a combinação linear das importâncias.
+
+        No modo fixo é o próprio `λ` (peso global constante). No dinâmico o peso
+        varia por linha (`lambda_local`); o efetivo é a **média** desse peso sobre
+        `df` — o λ constante que reproduziria, em média, a mesma mistura
+        uplift/conversão que o blend dinâmico aplica. É o que torna a combinação
+        de importâncias estatisticamente coerente com o score que de fato ranqueia,
+        em vez de fixar um λ arbitrário.
+        """
+        if self.mode == "fixed":
+            return self.lambda_
+        uncertainty = self.uplift_model.predict_uncertainty(df)["uncertainty"]
+        lambda_local = (uncertainty / (uncertainty.max() + 1e-9)) ** self.gamma
+        return float(lambda_local.mean())
+
+    def feature_importance(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Importâncias do blend: as duas separadas **e** a combinação linear.
+
+        Devolve um DataFrame indexado por feature com três colunas:
+
+        - `uplift` — importância **causal** (o que dirige o τ), do `UpliftModel`;
+        - `conversion` — importância **preditiva** (o que dirige a conversão), do
+          `ConversionModel`;
+        - `combined` — a combinação linear que **espelha a fórmula do score do
+          blend**, renormalizada para somar 1.
+
+        A `combined` segue a mesma álgebra do score de ranqueamento, para a
+        importância do blend significar o mesmo que o blend faz:
+
+        - modo fixo (`score = uplift + λ·p_convert`): `combined ∝ imp_uplift +
+          λ·imp_conversion`;
+        - modo dinâmico (`score = (1−λ)·uplift + λ·p_convert`, λ local): mistura
+          convexa com o **λ efetivo médio** (`_effective_lambda`), `combined ∝
+          (1−λ̄)·imp_uplift + λ̄·imp_conversion`.
+
+        As duas importâncias vivem em índices ligeiramente diferentes (o X-learner
+        não tem `offer_type`, seu eixo de estratificação; o baseline tem). Ambas
+        são realinhadas na união das features — `offer_type` recebe importância 0
+        no lado do uplift, coerente com não ser feature interna dele. Ordenado
+        por `combined` decrescente.
+        """
+        imp_uplift = self.uplift_model.feature_importance(df)
+        imp_conversion = self.conversion_model.feature_importance()
+
+        features = imp_conversion.index.union(imp_uplift.index)
+        u = imp_uplift.reindex(features).fillna(0.0)
+        c = imp_conversion.reindex(features).fillna(0.0)
+
+        lam = self._effective_lambda(df)
+        if self.mode == "fixed":
+            combined = u + lam * c
+        else:
+            combined = (1 - lam) * u + lam * c
+        total = combined.sum()
+        if total > 0:
+            combined = combined / total
+
+        return pd.DataFrame({"uplift": u, "conversion": c, "combined": combined}).sort_values(
+            "combined", ascending=False
+        )
 
     def save(self, cfg: PipelineConfig) -> Path:
         return _save_pickle(self, cfg.models_dir / BLENDED_MODEL_FILENAME)
