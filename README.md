@@ -36,17 +36,16 @@ attribution → label → features → cost → contract), validates against
 uv run python -m src.cli train                       # fit BlendedUpliftModel on the training split, serialize into models_dir
 uv run python -m src.cli predict --budget 5000       # recommend the top-N actions (one offer per customer)
 uv run python -m src.cli predict --out recs.csv      # write the CSV instead of printing
-uv run python -m src.cli predict --decision-time 24  # score as-of a decision instant (default: end of history)
 ```
 
 - **`train`** fits the `BlendedUpliftModel` from the config on the training side
   of the temporal split (no `informational`) and serializes it into
   `cfg.models_dir` — same data prep as the notebook, no new numbers.
 - **`predict`** is **real serving, not prediction over the historical base**: it
-  builds the scoring matrix **customers × active offers** as-of a decision
-  instant, scores it with the saved model, and returns the top-N actions. It
-  applies **one offer per customer** (best offer per `account_id`), then top-N
-  by budget (`cfg.predict_budget` / `--budget`).
+  builds the scoring matrix **customers × active offers**, scores it with the
+  saved model, and returns the top-N actions. It applies **one offer per
+  customer** (best offer per `account_id`), then top-N by budget
+  (`cfg.predict_budget` / `--budget`).
 
 ### Tests
 
@@ -105,7 +104,7 @@ NotebookClient(nb,timeout=5400,kernel_name='python3',resources={'metadata':{'pat
 | `uplift_eval.py` | Qini/AUUC (via `sklift`), placebo test, importance figures. |
 | `gaincurve.py` | Offline eval: incremental gain curve per budget top-N; hybrid/dynamic blend scoring; bootstrap CIs. |
 | `models.py` | Model wrappers: `UpliftModel`, `ConversionModel`, `BlendedUpliftModel` (production model). `from_config`, `save`/`load`, `feature_importance`. |
-| `serve.py` | `build_scoring_frame` (customers × active offers as-of decision), `recommend` (one offer/customer + top-N by budget). |
+| `serve.py` | `build_scoring_frame` (customers × active offers), `recommend` (one offer/customer + top-N by budget). |
 | `cli.py` | Product CLI `train`/`predict` — orchestrates `models` + `serve` + `split`. |
 | `quadrant.py` | Uplift-quadrant classification, gain-by-quadrant, recurrence-by-quadrant. |
 | `tracking.py` | MLflow experiment tracking. |
@@ -116,49 +115,40 @@ NotebookClient(nb,timeout=5400,kernel_name='python3',resources={'metadata':{'pat
 
 ## What's implemented
 
-**Data pipeline (spec 01, T-101…T-112).** Full staged transform behind
-`python -m src.pipeline`: config, io, clean, attribution + influence-aware label,
-leakage-free features, reward cost, executable contract + write. The grain is
-`(account_id, offer_id, received_time)`, unique.
-
-- **Guarantees G1–G10** are tested invariants: G1 unique grain · G2 no temporal
-  leakage · G3 label does **not** require view (control converts — view is the
-  treatment, not the label) · G4 conversion within validity · G5 informational
-  has no `offer completed` · G6 coherent cost · G7 sentinel handled · G8 no null
-  in non-nullable column · G9 exclusive exposure · G10 conversion reaches
-  `min_value`.
-- **`is_recurrent`** in the contract: a converted receipt whose customer
-  converts again (any offer) within `recurrence_window_days`. Derived from the
-  target — never a feature.
-
-**EDA & segmentation (T-108…T-111).** Descriptive EDA, covariate balance
-(view/no-view **and** across received offers), K-Means segmentation with
-explicit geometry. All figures on the single `viz.py` theme.
-
-**Modeling (spec 02).** Implemented: T-201…T-203, T-205, T-208, T-212.
-
-- **Baseline** predictive model (logistic + LGBM), `auc_lgbm=0.85 > auc_logit=0.80`.
-- **X-learner** per `offer_type` with fixed propensity; `informational` excluded
-  from modeling.
-- **Qini/AUUC evaluation** (via `sklift`) + **placebo permutation test**: real
-  Qini 0.0335 clears the null's 95th percentile (0.0186), empirical p = 0/20.
-- **Blends**: hybrid `X-learner + λ·raw-conversion` (best fixed λ=0.3) and a
-  **dynamic** version weighted by the X-learner's internal CATE disagreement
-  (best γ=1.0, Qini/AUUC 0.069/0.073 — best of the whole tested space).
-- **Offline evaluation** = incremental gain curve per budget top-N (not IPW):
-  incremental conversions (Qini-style scaled counterfactual) × mean profit per
-  treated conversion, monotone envelope, bootstrap CIs.
-
-**Product CLI (`cli.py`, `serve.py`, `models.py`).** Model wrappers encapsulate
-train + predict; `train` fits and serializes the `BlendedUpliftModel`, `predict`
-serves the top-N actions as-of a decision instant.
+- **Data pipeline (raw → processed).** Full staged transform behind
+  `python -m src.pipeline`: parse → clean → attribution → influence-aware label →
+  leakage-free features → reward cost → executable contract + write. Output grain
+  `(account_id, offer_id, received_time)`, unique.
+- **Structural guarantees G1–G10.** Tested invariants over the real data: unique
+  grain, no temporal leakage, label independent of view, conversion within
+  validity, coherent cost, sentinel handling, exclusive exposure, minimum-spend
+  on conversion.
+- **`is_recurrent`.** A converted receipt whose customer converts again (any
+  offer) within a configurable window. Derived from the target, never a feature.
+- **EDA & segmentation.** Descriptive EDA, covariate balance (view/no-view and
+  across received offers), and K-Means segmentation with explicit geometry — all
+  figures on the single `viz.py` theme.
+- **Predictive baseline.** Logistic + LGBM conversion model with MLflow tracking
+  (`auc_lgbm=0.85 > auc_logit=0.80`).
+- **X-learner uplift.** CATE per `offer_type` with fixed propensity, plus CATE
+  uncertainty and causal feature importance.
+- **Qini/AUUC evaluation.** Ranking metrics via `sklift`, backed by a placebo
+  permutation test that confirms the signal is real, not noise.
+- **Blend scoring.** Hybrid `X-learner + λ·raw-conversion` (fixed λ) and a
+  dynamic version weighted by the X-learner's internal CATE disagreement — the
+  production `BlendedUpliftModel`.
+- **Offline evaluation.** Incremental gain curve per budget top-N: incremental
+  conversions × mean profit per treated conversion, monotone envelope, bootstrap
+  confidence intervals.
+- **Product CLI.** Model wrappers encapsulate train + predict; `cli train` fits
+  and serializes the `BlendedUpliftModel`, `cli predict` serves the top-N actions
+  (one offer per customer, top-N by budget).
 
 **Removed by user decision** (recorded in the specs as `~~struck~~`):
-cost-sensitive policy + allocation baselines (REQ-204/205), IPW / Direct Method
-(REQ-207/208/211), magnitude calibration + isotonic correction (REQ-213/214),
-and `informational` from modeling. The project evaluates uplift models by
-Qini/AUUC and the per-budget gain curve — there is no longer a "decide who to
-send to" allocation step.
+cost-sensitive policy + allocation baselines, IPW / Direct Method, magnitude
+calibration + isotonic correction, and `informational` from modeling. The
+project evaluates uplift models by Qini/AUUC and the per-budget gain curve —
+there is no longer a "decide who to send to" allocation step.
 
 ---
 
