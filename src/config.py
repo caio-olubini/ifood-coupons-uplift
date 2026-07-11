@@ -89,6 +89,20 @@ class PipelineConfig(BaseSettings):
     xlearner_max_depth: int = Field(default=-1)
     xlearner_learning_rate: float = Field(default=0.05, gt=0)
 
+    # Onde os modelos treinados (`src.models`) são serializados. É a fronteira
+    # entre `model train` (escreve) e `model predict` (lê) no CLI — o par de
+    # comandos produtivos que os wrappers habilitam.
+    models_dir: Path = Path("models")
+
+    # Blend padrão do `BlendedUpliftModel` quando nenhum parâmetro é passado.
+    # Os dois melhores blends medidos no holdout real (ver CLAUDE.md): λ=0,3
+    # fixo e γ=1,0 dinâmico. `blend_mode` escolhe qual dos dois um blend sem
+    # argumentos usa; o grid completo (`hybrid_lambda_grid`/
+    # `dynamic_hybrid_gamma_grid`) continua servindo o estudo comparativo.
+    blend_mode: str = Field(default="fixed", pattern="^(fixed|dynamic)$")
+    blend_lambda: float = Field(default=0.3, ge=0)
+    blend_gamma: float = Field(default=1.0, gt=0)
+
     # Avaliação offline: curva de ganho incremental por budget top-N (REQ-206).
     # Cada estratégia (uplift, conversão crua, aleatório) é um ranking; a curva
     # mede o lucro líquido incremental causal dos top-N. Estes budgets são os

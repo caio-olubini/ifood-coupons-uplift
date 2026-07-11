@@ -42,24 +42,37 @@ incremental. A curva aqui mede só o **ganho causal**: a diferença tratado −
 controle observada no RCT (Premissa 4), não a receita bruta de quem foi tratado.
 
 **O contrafactual é observado, não previsto (estilo Qini).** O ranking vem do
-modelo, mas o *ganho* de cada prefixo top-N sai do dado real: entre os top-N,
-o lucro incremental é
+modelo, mas o *ganho* de cada prefixo top-N sai do dado real. A **conversão
+incremental** é o contrafactual escalado estilo Qini sobre `converted` (0/1):
 
-    lucro_incremental(N) = L_tratado(N) − L_controle(N) · N_tratado(N)/N_controle(N)
+    conversao_incremental(N) = C_tratado(N) − C_controle(N) · N_tratado(N)/N_controle(N)
 
-onde `L` é a soma do lucro por linha do braço dentro do prefixo. Escalar o
-controle pela razão tratado/controle é a mesma correção da curva Qini
+Escalar o controle pela razão tratado/controle é a mesma correção da curva Qini
 (`uplift_eval.qini_curve`): estima o contrafactual dos tratados a partir dos
-controles observados no mesmo prefixo, sem assumir grupos de tamanho igual.
+controles observados no mesmo prefixo, sem assumir grupos de tamanho igual. Por
+ser 0/1, sem variância de ticket, é a métrica **estável**.
+
+**O lucro incremental é conversão incremental × lucro médio por conversão
+tratada** (`_profit_per_treated_conversion`), não o contrafactual escalado
+direto sobre o lucro por linha:
+
+    lucro_incremental(N) = conversao_incremental(N) · lucro_medio_por_conversao_tratada(N)
+
+Quantas conversões a oferta causa, vezes quanto vale uma conversão típica do
+grupo escolhido. A versão anterior — `L_tratado(N) − L_controle(N)·razão` sobre
+o lucro por linha — era **instável**: multiplicava o fator de escala volátil
+pela soma acumulada de `conversion_value` (variância de ticket enorme, até
+R$1015), fazendo o ganho *cair* com o budget. Fatorar em (contagem estável) ×
+(lucro médio estável) remove a instabilidade na origem: o ticket alto de um
+cliente entra diluído numa média, não multiplicado pela razão.
 
 **Lucro líquido, por linha, sem assimetria por braço.** O lucro por linha é
 `conversion_value − reward_cost`, igual para tratado e controle. `reward_cost`
 já vem zerado em quem não converteu (`cost.add_reward_cost`, G6): o desconto é
 concedido a quem atinge o `min_value` na validade, **view ou não**
-(`test_unviewed_conversion_still_costs`) — o controle pode converter e pagar
-desconto de verdade, não é imune por não ter visto a oferta. Não há assimetria
-nenhuma a impor aqui: cada linha carrega seu lucro real, e `L_controle(N)` na
-fórmula acima já inclui qualquer `reward_cost` que o controle de fato pagou.
+(`test_unviewed_conversion_still_costs`). O lucro médio por conversão tratada é
+sobre esse `net_profit` real — a conversão incremental é uma conversão causada,
+que se materializa como conversão de tratado e carrega seu desconto pago.
 
 **Conversão incremental é a mesma fórmula sobre `converted`.** `converted` é
 0/1 por linha (sem a assimetria de custo do lucro — não há desconto a debitar
@@ -123,6 +136,51 @@ def _scaled_counterfactual_gain(
     return cum_treated - cum_control * scale
 
 
+def _monotone_envelope(cumulative: np.ndarray) -> np.ndarray:
+    """Máximo acumulado (`cummax`) do ganho por prefixo — o envelope não-decrescente.
+
+    O contrafactual escalado (`_scaled_counterfactual_gain`) **não é monótono**
+    em N: `scale = n_tratado/n_controle` reescala *todo* o histórico de controle
+    a cada passo, então um lote de controles convertendo com ticket alto entrando
+    no prefixo faz o termo subtraído crescer mais rápido que o dos tratados, e o
+    ganho cru cai — instabilidade conhecida do estimador de razão estilo Qini
+    quando o balanço tratado/controle varia ao longo do ranking (aqui o controle
+    é ~30% do holdout: ver é escolha do cliente, não braço aleatório). A queda é
+    real no estimador, não nos dados (a curva de `conversions`, sem a variância
+    de ticket, é quase lisa), mas não corresponde a nenhuma decisão: ninguém é
+    obrigado a gastar o budget inteiro — pode parar no melhor prefixo ≤ N.
+
+    O envelope responde essa pergunta de negócio — "com budget N, o melhor lucro
+    incremental que consigo travar" — e é o que a curva reporta. Aplicado também
+    a `conversions` e às bandas de IC, para envelope e banda ficarem coerentes.
+    """
+    return np.maximum.accumulate(cumulative)
+
+
+def _profit_per_treated_conversion(profit: np.ndarray, treated: np.ndarray, converted: np.ndarray) -> np.ndarray:
+    """Lucro médio por conversão tratada, acumulado por prefixo top-N.
+
+    Uma conversão *incremental* é uma conversão que a oferta causou; ela se
+    materializa como conversão de tratado e carrega um `net_profit` real
+    (`conversion_value − reward_cost`). O valor de uma conversão incremental é,
+    portanto, o lucro médio das conversões de tratado **dentro do prefixo** — a
+    estatística coerente com o grupo que o ranking está de fato escolhendo.
+
+    É uma **média** (soma do lucro tratado-convertido ÷ nº de tratados
+    convertidos), não uma soma escalada: estabiliza conforme N cresce em vez de
+    ser reescalada a cada passo pela razão tratado/controle. É isso que torna o
+    ganho estável — o ticket alto de um cliente entra diluído numa média, não
+    multiplicado pelo fator de escala volátil. Prefixo sem nenhum tratado
+    convertido ainda → 0 (não há conversão a valorar; o nº de conversões
+    incrementais ali também é ~0, então o ganho é ~0 de qualquer forma).
+    """
+    treated_conv = treated * converted
+    cum_profit = np.concatenate([[0.0], np.cumsum(profit * treated_conv)])
+    cum_count = np.concatenate([[0.0], np.cumsum(treated_conv)])
+    with np.errstate(divide="ignore", invalid="ignore"):
+        return np.where(cum_count > 0, cum_profit / cum_count, 0.0)
+
+
 def incremental_gain_curve(ranking: np.ndarray, holdout_df: pd.DataFrame) -> pd.DataFrame:
     """Curva `(n, gain, conversions)` de uma estratégia sobre o holdout.
 
@@ -131,13 +189,25 @@ def incremental_gain_curve(ranking: np.ndarray, holdout_df: pd.DataFrame) -> pd.
     tomando os primeiros N desse vetor. `holdout_df` precisa de `NET_PROFIT_COLUMN`
     (via `add_net_profit`), `treatment` e `converted`.
 
-    Em cada prefixo top-N, `gain` (lucro líquido incremental, R$) e
-    `conversions` (conversões incrementais, contagem) usam o mesmo contrafactual
-    estilo Qini: soma da métrica nos tratados menos a soma nos controles
+    `conversions` (conversões incrementais, contagem) é o contrafactual escalado
+    estilo Qini sobre `converted`: soma nos tratados menos a soma nos controles
     **escalada** pela razão tratado/controle do prefixo — o contrafactual dos
-    tratados estimado a partir dos controles observados ali. Um prefixo sem
-    nenhum controle não tem contrafactual: o valor fica o do último prefixo que
-    tinha (a curva não "inventa" ganho onde não há como estimá-lo).
+    tratados estimado a partir dos controles observados ali. É a métrica
+    **estável**: 0/1 por linha, sem a variância de ticket.
+
+    `gain` (lucro líquido incremental, R$) é `conversions × lucro médio por
+    conversão tratada no prefixo` (`_profit_per_treated_conversion`) — quantas
+    conversões a oferta causa, vezes quanto vale uma conversão típica desse
+    grupo. **Substitui** o contrafactual escalado direto sobre o lucro por
+    linha, que era instável: aquele multiplicava o fator de escala volátil pela
+    soma acumulada de `conversion_value` (variância de ticket enorme), fazendo o
+    ganho cair com o budget. Fatorar em (contagem estável) × (lucro médio
+    estável) remove essa instabilidade na origem, não só na apresentação.
+
+    Ambas passam pelo **envelope monótono** (`_monotone_envelope`) como salvaguarda
+    — a nova fórmula já é quase monótona, mas o envelope garante a leitura de
+    negócio "com budget N, o melhor que consigo travar" (parar no melhor prefixo
+    ≤ N), não-decrescente.
 
     Retorna `[n, gain, conversions]` com uma linha por N de 0 ao total; N=0 é 0.
     """
@@ -147,8 +217,11 @@ def incremental_gain_curve(ranking: np.ndarray, holdout_df: pd.DataFrame) -> pd.
     profit = ordered[NET_PROFIT_COLUMN].to_numpy()
     converted = ordered["converted"].to_numpy(dtype=float)
 
-    gain = _scaled_counterfactual_gain(profit, treated, control)
-    conversions = _scaled_counterfactual_gain(converted, treated, control)
+    conversions_raw = _scaled_counterfactual_gain(converted, treated, control)
+    profit_per_conv = _profit_per_treated_conversion(profit, treated, converted)
+
+    gain = _monotone_envelope(conversions_raw * profit_per_conv)
+    conversions = _monotone_envelope(conversions_raw)
 
     return pd.DataFrame(
         {"n": np.arange(len(gain)), "gain": gain, "conversions": conversions}

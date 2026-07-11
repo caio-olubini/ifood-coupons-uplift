@@ -102,7 +102,11 @@ def test_composition_at_budget_traz_tau_medio_por_quadrante():
 
 def _holdout(rows):
     columns = ["account_id", "offer_id", "treatment", "conversion_value", "reward_cost"]
-    return pd.DataFrame(rows, columns=columns)
+    df = pd.DataFrame(rows, columns=columns)
+    # `gain_by_quadrant_at_budget` fatora o lucro em conversão incremental ×
+    # lucro médio por conversão tratada, então precisa de `converted`; nestas
+    # fixtures toda linha com lucro positivo é uma conversão.
+    return df.assign(converted=(df["conversion_value"] > 0).astype(int))
 
 
 def test_gain_by_quadrant_marca_inavaliavel_sem_controle_no_quadrante():
@@ -112,10 +116,10 @@ def test_gain_by_quadrant_marca_inavaliavel_sem_controle_no_quadrante():
     de `uplift_eval.calibration_by_bin`).
     """
     holdout = _holdout([
-        ("a", "o", 1, 50.0, 0.0),  # persuadable, tratado
+        ("a", "o", 1, 50.0, 0.0),  # persuadable, tratado, convertido
         ("b", "o", 1, 60.0, 0.0),  # persuadable, tratado (sem controle no quadrante)
-        ("c", "o", 1, 40.0, 0.0),  # sure_thing, tratado
-        ("d", "o", 0, 10.0, 0.0),  # sure_thing, controle
+        ("c", "o", 1, 40.0, 0.0),  # sure_thing, tratado, convertido
+        ("d", "o", 0, 0.0, 0.0),   # sure_thing, controle, NÃO convertido
     ])
     stages = _stages([2 * EPS, 2 * EPS, 0.0, 0.0])
     p_convert = _p_convert([0.5, 0.5, 0.9, 0.9])
@@ -127,7 +131,9 @@ def test_gain_by_quadrant_marca_inavaliavel_sem_controle_no_quadrante():
     assert not por_quadrante.loc[PERSUADABLE, "avaliavel"]
     assert np.isnan(por_quadrante.loc[PERSUADABLE, "gain"])
     assert por_quadrante.loc[SURE_THING, "avaliavel"]
-    assert por_quadrante.loc[SURE_THING, "gain"] == pytest.approx(40.0 - 10.0)
+    # sure_thing: 1 tratado convertido (lucro 40), 1 controle não-convertido —
+    # conversão incremental = 1 − 0 = 1; lucro médio por conversão tratada = 40.
+    assert por_quadrante.loc[SURE_THING, "gain"] == pytest.approx(1.0 * 40.0)
 
 
 def test_gain_by_quadrant_traz_tau_medio_mesmo_quando_inavaliavel():
@@ -155,28 +161,37 @@ def test_gain_by_quadrant_traz_tau_medio_mesmo_quando_inavaliavel():
 
 def test_gain_by_quadrant_soma_bate_com_gain_agregado_quando_um_so_quadrante():
     """Sanidade: com um único quadrante no top-N, o gain por quadrante deve
-    coincidir com o contrafactual escalado do prefixo inteiro (mesma fórmula,
-    só reaplicada num subconjunto que é o conjunto inteiro).
+    coincidir com a mesma métrica (conversão incremental × lucro médio por
+    conversão tratada) aplicada ao prefixo inteiro — é a mesma fórmula só
+    reaplicada num subconjunto que é o conjunto inteiro. Compara com o valor
+    **cru** (sem o envelope monótono que `incremental_gain_curve` aplica por
+    cima, e que só faz sentido numa curva, não numa decomposição de um budget).
     """
-    from src.gaincurve import incremental_gain_curve
+    from src.gaincurve import _profit_per_treated_conversion, _scaled_counterfactual_gain
 
     holdout = _holdout([
-        ("a", "o", 1, 100.0, 0.0),
-        ("b", "o", 0, 20.0, 0.0),
-        ("c", "o", 1, 80.0, 0.0),
-        ("d", "o", 0, 10.0, 0.0),
-    ]).assign(converted=1)
+        ("a", "o", 1, 100.0, 0.0),  # tratado convertido
+        ("b", "o", 0, 0.0, 0.0),    # controle não-convertido
+        ("c", "o", 1, 80.0, 0.0),   # tratado convertido
+        ("d", "o", 0, 20.0, 0.0),   # controle convertido
+    ])
     stages = _stages([2 * EPS] * 4)  # todo mundo persuadable
     p_convert = _p_convert([0.5] * 4)
     ranking = np.array([0, 1, 2, 3])
 
     gain_por_quadrante = gain_by_quadrant_at_budget(ranking, holdout, stages, p_convert, cfg, budget=4)
-    gain_agregado = incremental_gain_curve(ranking, holdout.assign(
-        net_profit_realized=holdout["conversion_value"] - holdout["reward_cost"]
-    ))
+
+    treated = (holdout["treatment"].to_numpy() == 1).astype(float)
+    control = 1.0 - treated
+    converted = holdout["converted"].to_numpy(dtype=float)
+    profit = (holdout["conversion_value"] - holdout["reward_cost"]).to_numpy()
+    gain_agregado_cru = (
+        _scaled_counterfactual_gain(converted, treated, control)
+        * _profit_per_treated_conversion(profit, treated, converted)
+    )[-1]
 
     assert gain_por_quadrante.set_index("quadrante").loc[PERSUADABLE, "gain"] == pytest.approx(
-        gain_agregado["gain"].iloc[-1]
+        gain_agregado_cru
     )
 
 

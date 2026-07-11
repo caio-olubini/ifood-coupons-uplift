@@ -142,6 +142,29 @@ incremental por budget top-N** (`src/gaincurve.py`, REQ-206/T-208).
 `notebooks/2_modeling.ipynb` roda tudo de ponta a ponta sobre o dado real.
 `auc_lgbm=0.85` supera `auc_logit=0.80` (T-203 ok).
 
+**Wrappers de modelo (`src/models.py`) encapsulam treino+predição num objeto,
+como precursor dos comandos `model train`/`model predict` do CLI (2026-07-11,
+por pedido do usuário — puxar o projeto para o lado de produto/engenharia).**
+Três classes que se instanciam com **parâmetros simples** (os defaults vivem na
+config, REQ-110) e têm `from_config(cfg)` para o caminho produtivo: `UpliftModel`
+(embrulha o X-learner de `src/uplift.py` — `fit`/`predict`/`predict_stages`/
+`predict_uncertainty`, com o dict interno de `BaseXRegressor` em
+`.models`), `ConversionModel` (o prior de conversão P(converte) do LGBM baseline,
+só a metade LGBM de `model_baseline.train`) e `BlendedUpliftModel` (o modelo de
+produção: compõe um `UpliftModel` com um `ConversionModel` e devolve o score de
+ranqueamento — `mode="fixed"` usa `score = τ + λ·p_convert`, `mode="dynamic"` o
+peso local por incerteza; `score`/`rank` delegam a fórmula a `gaincurve`, que já
+a testa). `save`/`load` serializam o objeto ajustado inteiro em `cfg.models_dir`,
+fechando a fronteira treinar(escreve)→prever(lê). Novos campos de config:
+`models_dir`, `blend_mode`/`blend_lambda`/`blend_gamma` (o blend padrão sem
+argumentos: λ=0,3 fixo ou γ=1,0 dinâmico, os dois melhores do holdout real).
+Os wrappers **não reimplementam** nada — orquestram as funções puras de `src/`;
+`test_models.py` (7 testes) guarda o que quebra o CLI em silêncio: `from_config`
+lendo o hiperparâmetro certo, o blend não alterando a fórmula de `gaincurve`, e
+`save`/`load` prevendo/ranqueando idêntico. `notebooks/2_modeling.ipynb` puxa os
+modelos dos wrappers (`UpliftModel.from_config(cfg).fit`, os dois blends via
+`BlendedUpliftModel`) — números de §5 inalterados (drop-in numericamente exato).
+
 **Política sensível a custo, seus baselines e a calibração de magnitude foram
 removidas do projeto por decisão do usuário (2026-07-10).** `src/policy.py`
 (`offer_economics`, `expected_net_profit`, `allocate`, os três baselines de
@@ -296,12 +319,44 @@ sobre receita bruta realizada (`conversion_value − reward_cost` ocorrido), que
 conversão causada com a espontânea — não isolam o incremental. Removidos junto com
 `src/offpolicy.py`, `src/impact.py`, seus testes, e os campos de config `ipw_*`/`ab_test_*`;
 REQ-207/208/211 e T-209 descontinuados nas specs (ficam como `~~riscado~~`, com o porquê).
-**Achado real, registrado:** no dado real a **conversão crua domina** o modelo de uplift em
-todos os budgets na curva de *lucro* (o eixo premia ticket alto, não incrementalidade pura —
-Qini honesto é só 0,034); o uplift supera a aleatória nos budgets maiores, e os blends
-(λ=0,3 fixo, γ=1,0 dinâmico) se aproximam ou superam a conversão crua nos budgets
-maiores sem abrir mão de tanta ordenação causal. As duas métricas (Qini e R$) convivem
-e respondem perguntas diferentes.
+**O lucro incremental é fatorado em conversão incremental × lucro médio por
+conversão tratada — não mais o contrafactual escalado direto sobre o lucro por
+linha (2026-07-11, por pedido do usuário).** A versão anterior
+(`L_tratado − L_controle · razão` sobre o `net_profit` por linha) era
+**instável**: `scale = n_tratado/n_controle` reescalava *todo* o histórico de
+controle a cada passo e multiplicava a soma acumulada de `conversion_value`
+(variância de ticket enorme, até R$1015), fazendo o lucro **cair** com o budget
+(não-monotonicidade real do estimador de razão quando o balanço tratado/controle
+varia ao longo do ranking — o controle é ~30% do holdout, ver é escolha do
+cliente). A fatoração remove a instabilidade **na origem**:
+
+    lucro_incremental(N) = conversao_incremental(N) · lucro_medio_por_conversao_tratada(N)
+
+`conversao_incremental` é o contrafactual escalado estilo Qini sobre `converted`
+(0/1, `gaincurve._scaled_counterfactual_gain`) — estável, sem variância de
+ticket. `lucro_medio_por_conversao_tratada` (`gaincurve._profit_per_treated_conversion`)
+é a **média** do `net_profit` das conversões de tratado no prefixo — o ticket
+alto entra diluído numa média, não multiplicado pela razão volátil. No dado real
+o R$/conversão fica estável (~R$14–20) em todo budget, e a curva vira **monótona**
+já antes do envelope. `gaincurve._monotone_envelope` (cummax) permanece como
+salvaguarda leve, com a leitura de negócio "com budget N, o melhor que consigo
+travar" (parar no melhor prefixo ≤ N). `quadrant.gain_by_quadrant_at_budget` usa
+a **mesma** fatoração (decomposição de um budget, sem envelope), para "lucro
+incremental por quadrante" significar o mesmo que o de §5. Testes:
+`test_lucro_e_conversao_incremental_vezes_lucro_medio_por_conversao_tratada`,
+`test_curva_de_lucro_aplica_envelope_monotono`,
+`test_conversao_incremental_e_o_contrafactual_qini_escalado`.
+
+**Achado real, registrado — mudou com G10 e a fatoração.** Antes de G10 a
+**conversão crua dominava** a curva de *lucro* (ticket alto, artefato da fórmula
+antiga que multiplicava ticket pela escala). **Já não domina**: no holdout real
+(pós-G10, fatorado) no budget 15.000 os blends lideram — dinâmico γ=1,0 R$32.079,
+híbrido λ=0,3 R$29.892 — acima da conversão crua (R$23.929), do aleatório
+(R$25.934) e do uplift puro (R$29.576, que também supera a conversão crua). A
+separação (quantas conversões × quanto vale cada uma) matou o artefato de seleção
+por ticket. As duas métricas (Qini e R$) convivem; a ordenação causal (Qini)
+segue favorecendo os blends dinâmicos. Números antigos em outputs cacheados são
+pré-fatoração — re-executar corrige.
 
 **A curva de ganho também devolve conversão incremental e IC (2026-07-10, por pedido do
 usuário).** `gaincurve.incremental_gain_curve`/`gain_curves` trazem `conversions` ao lado de
@@ -438,3 +493,28 @@ da janela; a segunda só fica 1 se houver uma terceira depois dela dentro da
 janela. `test_recurrence_flag_marks_second_conversion_inside_window` e
 `test_recurrence_flag_respects_configurable_window` guardam o grão e o
 parâmetro configurável.
+
+**§7 do notebook de modelagem: uplift de recorrência por budget e quadrante
+(2026-07-11, por pedido do usuário; reformulado no mesmo dia de taxa bruta
+para incremental).** `quadrant.recurrence_gain_at_budget` (consolidado, §7.1) e
+`recurrence_by_quadrant_at_budget` (por quadrante causal, §7.2) medem se a
+oferta **causa** recorrência, não só correlaciona: taxa de `is_recurrent` no
+tratado menos a taxa no controle, escalada pelo mesmo contrafactual estilo
+Qini de `gaincurve._scaled_counterfactual_gain` (`_recurrence_gain`), e
+normalizada por `n_tratado` para virar uma taxa incremental, não uma soma —
+"do mesmo jeito que reportamos receita incremental" (pedido do usuário), não
+mais a taxa bruta `mean(is_recurrent)` da primeira versão. `is_recurrent` é
+outcome, nunca insumo do ranking ou da classificação de quadrante (segue
+sendo excluída de `FEATURE_COLUMNS`). O grupo em cada braço é sempre quem
+converteu (`converted=1`): `is_recurrent` só é definida ali, e misturar
+não-convertidos (sempre 0) trocaria "a oferta faz quem converte recorrer
+mais?" por "a oferta faz mais gente converter e recorrer?". `n` é o N de
+convertidos tratados que sustenta a taxa; IC por bootstrap não paramétrico
+(`_recurrence_gain_ci`, mesmo padrão de `gaincurve.gain_curves_with_ci`) sai
+ao lado (`recurrence_gain_lo`/`_hi`). Quadrante sem convertido em algum braço
+fica `avaliavel=False`, sem taxa inventada. **Achado do dado real:** o IC
+cruza zero em toda estratégia e todo quadrante — nenhuma evidência de que a
+oferta cause (ou iniba) recorrência de forma detectável neste budget/holdout;
+a taxa bruta por quadrante da primeira versão (0,10–0,13) media só a
+prevalência de `is_recurrent`, não o efeito causal, e por isso parecia mais
+"informativa" do que de fato é.

@@ -12,6 +12,7 @@ import pytest
 from src.config import load
 from src.gaincurve import (
     NET_PROFIT_COLUMN,
+    _scaled_counterfactual_gain,
     add_net_profit,
     completion_ranking,
     dynamic_hybrid_ranking,
@@ -66,38 +67,54 @@ def test_net_profit_e_zero_quando_nao_converteu_sem_reward_cost_solto():
     assert (lucro == 0.0).all()
 
 
-def test_ganho_no_budget_total_e_o_contrafactual_qini_escalado():
-    """No prefixo completo, o ganho é L_tratado − L_controle · (N_t/N_c) — o
-    contrafactual dos tratados estimado a partir dos controles observados.
-    Dois tratados (lucro 40 e 20) e um controle (lucro 10): ganho = 60 − 10·(2/1) = 40.
+def test_conversao_incremental_e_o_contrafactual_qini_escalado():
+    """A conversão incremental é C_tratado − C_controle · (N_t/N_c) — o
+    contrafactual dos tratados estimado a partir dos controles observados. Dois
+    tratados convertidos e um controle convertido: 2 − 1·(2/1) = 0. É a métrica
+    estável (0/1, sem variância de ticket) que fatora o ganho.
+    """
+    converted = np.array([1.0, 1.0, 1.0])
+    treated = np.array([1.0, 1.0, 0.0])
+    control = 1.0 - treated
+    cru = _scaled_counterfactual_gain(converted, treated, control)
+
+    assert cru[0] == 0.0
+    assert cru[-1] == pytest.approx(0.0)
+
+
+def test_lucro_e_conversao_incremental_vezes_lucro_medio_por_conversao_tratada():
+    """O ganho em R$ é conversão incremental × lucro médio por conversão tratada,
+    não o contrafactual escalado sobre o lucro por linha (que era instável).
+
+    Prefixo com um tratado convertido (lucro 40) e um controle convertido
+    (lucro 10): conversão incremental crua = 1 − 1·(1/1) = 0 no prefixo completo,
+    mas em N=1 (só o tratado) = 1. O lucro médio por conversão tratada em N=1 é
+    40 (uma conversão tratada de lucro 40), então o ganho cru em N=1 é 1·40 = 40.
+    O controle nunca entra no lucro médio — só conversões *tratadas* o compõem.
     """
     holdout = add_net_profit(_holdout([
-        ("a", "o", 1, 45.0, 5.0),   # lucro 40, tratado
-        ("b", "o", 1, 25.0, 5.0),   # lucro 20, tratado
-        ("c", "o", 0, 10.0, 0.0),   # lucro 10, controle
+        ("a", "o", 1, 45.0, 5.0, 1),   # tratado convertido, lucro 40
+        ("b", "o", 0, 15.0, 5.0, 1),   # controle convertido, lucro 10
     ]))
     curva = incremental_gain_curve(holdout.index.to_numpy(), holdout)
 
-    assert curva["n"].tolist() == [0, 1, 2, 3]
-    assert curva["gain"].iloc[0] == 0.0
-    assert curva["gain"].iloc[-1] == pytest.approx(40.0)
+    assert curva["gain"].iloc[1] == pytest.approx(40.0)   # 1 conversão incremental × R$40/conv
 
 
-def test_prefixo_sem_controle_nao_desconta_contrafactual():
-    """Enquanto o prefixo só tem tratados, não há contrafactual a subtrair: o
-    ganho é o lucro acumulado dos tratados, sem NaN nem salto. O controle só
-    entra na última posição, então N=1 e N=2 são puro lucro tratado.
+def test_curva_de_lucro_aplica_envelope_monotono():
+    """A curva de lucro é não-decrescente: quando o contrafactual leva a conversão
+    incremental a cair (um controle convertido entra e zera o incremento), o
+    ganho cru cairia, mas o envelope mantém o melhor prefixo — "com budget N, o
+    melhor lucro que consigo travar". Sem o envelope a curva desceria.
     """
     holdout = add_net_profit(_holdout([
-        ("a", "o", 1, 45.0, 5.0),   # lucro 40, tratado
-        ("b", "o", 1, 25.0, 5.0),   # lucro 20, tratado
-        ("c", "o", 0, 10.0, 0.0),   # controle, por último
+        ("a", "o", 1, 45.0, 5.0, 1),   # tratado convertido, lucro 40 → ganho sobe para 40
+        ("b", "o", 0, 15.0, 5.0, 1),   # controle convertido → conversão incremental volta a 0
     ]))
     curva = incremental_gain_curve(holdout.index.to_numpy(), holdout)
 
-    assert curva["gain"].iloc[1] == pytest.approx(40.0)   # só o 1º tratado
-    assert curva["gain"].iloc[2] == pytest.approx(60.0)   # os dois tratados, sem contrafactual
-    assert not curva["gain"].isna().any()
+    assert curva["gain"].tolist() == pytest.approx([0.0, 40.0, 40.0])
+    assert (curva["gain"].diff().dropna() >= -1e-9).all(), "curva de lucro deve ser não-decrescente"
 
 
 def test_ranking_de_uplift_ordena_por_tau_decrescente():
@@ -238,21 +255,6 @@ def test_gain_at_budget_devolve_o_maior_n_dentro_do_orcamento():
     curvas = gain_curves({"s": holdout.index.to_numpy()}, holdout)
     linha = gain_at_budget(curvas, budget=2)
     assert linha["n"].iloc[0] == 2
-
-
-def test_conversao_incremental_usa_o_mesmo_contrafactual_escalado():
-    """Mesma fórmula do lucro, mas sobre `converted`: dois tratados convertidos
-    (converted=1) e um controle convertido (converted=1) — conversão
-    incremental = 2 − 1·(2/1) = 0.
-    """
-    holdout = _holdout([
-        ("a", "o", 1, 45.0, 5.0, 1),
-        ("b", "o", 1, 25.0, 5.0, 1),
-        ("c", "o", 0, 10.0, 0.0, 1),
-    ])
-    holdout = add_net_profit(holdout)
-    curva = incremental_gain_curve(holdout.index.to_numpy(), holdout)
-    assert curva["conversions"].iloc[-1] == pytest.approx(0.0)
 
 
 def test_gain_curves_with_ci_traz_bandas_que_contem_o_ponto():

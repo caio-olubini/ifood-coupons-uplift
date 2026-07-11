@@ -62,6 +62,15 @@ xlearner_n_estimators: 200
 xlearner_max_depth: -1
 xlearner_learning_rate: 0.05
 
+# Modelos treinados (src.models): onde `model train` escreve e `model predict`
+# lê. blend_mode/blend_lambda/blend_gamma são o blend padrão do
+# BlendedUpliftModel sem argumentos — os dois melhores blends do holdout real
+# (λ=0,3 fixo, γ=1,0 dinâmico); blend_mode escolhe qual.
+models_dir: "models"
+blend_mode: "fixed"
+blend_lambda: 0.3
+blend_gamma: 1.0
+
 # Avaliação offline: curva de ganho incremental por budget top-N (REQ-206).
 # Budgets destacados na leitura "se meu budget for N, quanto ganho cada
 # estratégia?" — a curva inteira é varrida; estes são só os pontos tabelados.
