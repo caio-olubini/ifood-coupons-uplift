@@ -18,6 +18,7 @@ from __future__ import annotations
 import argparse
 import logging
 
+import numpy as np
 from pyspark.sql import functions as F
 
 from src import serve, split
@@ -67,7 +68,8 @@ def predict(cfg: PipelineConfig, budget: int, decision_time: float | None, out: 
 
     Monta a matriz de scoring (clientes × ofertas ativas de bogo/discount) as-of
     `decision_time`, pontua com o `BlendedUpliftModel` salvo e seleciona
-    (`serve.recommend`). Sem `--out`, imprime as recomendações; com `--out`,
+    (`serve.recommend`, amostragem softmax por `cfg.blend_temperature`,
+    reprodutível pela seed). Sem `--out`, imprime as recomendações; com `--out`,
     escreve o CSV.
     """
     model = BlendedUpliftModel.load(cfg)
@@ -91,7 +93,13 @@ def predict(cfg: PipelineConfig, budget: int, decision_time: float | None, out: 
         spark.stop()
 
     scored["score"] = model.score(scored).to_numpy()
-    recs = serve.recommend(scored, budget)
+    # Rank padrão dos modelos: amostragem softmax por `cfg.blend_temperature`,
+    # reprodutível pela seed da config (ver `serve.recommend`).
+    recs = serve.recommend(
+        scored, budget,
+        temperature=cfg.blend_temperature,
+        rng=np.random.default_rng(cfg.seed),
+    )
 
     logger.info(
         "Recomendadas %d ações (budget=%d) as-of t=%.2f, de %d pares candidatos.",

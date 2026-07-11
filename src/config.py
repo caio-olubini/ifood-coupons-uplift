@@ -108,6 +108,16 @@ class PipelineConfig(BaseSettings):
     blend_lambda: float = Field(default=0.3, ge=0)
     blend_gamma: float = Field(default=1.0, gt=0)
 
+    # Temperatura da amostragem softmax (Boltzmann) na etapa de rank — o
+    # mecanismo de rank **padrão** dos modelos (`BlendedUpliftModel.rank`,
+    # `serve.recommend`, e portanto `cli predict`). Cada cliente entra na ordem
+    # com chance ∝ exp(score_norm/τ): τ→0 colapsa no determinístico (ordena por
+    # score), τ alto tende à loteria uniforme, τ intermediário dá chance real a
+    # quem está logo abaixo do corte (exploração). O default 0,2 liga o softmax
+    # por padrão; a seleção fica reprodutível pela `seed`, estocástica por
+    # design. Zerar (0,0) recupera o corte duro determinístico.
+    blend_temperature: float = Field(default=0.2, ge=0)
+
     # Avaliação offline: curva de ganho incremental por budget top-N (REQ-206).
     # Cada estratégia (uplift, conversão crua, aleatório) é um ranking; a curva
     # mede o lucro líquido incremental causal dos top-N. Estes budgets são os

@@ -224,6 +224,12 @@ class BlendedUpliftModel:
     `score(df)` devolve o score por linha; `rank(df)` a ordem de prioridade
     (índices, do mais ao menos prioritário) — a saída que `model predict`
     entrega e a curva de ganho consome.
+
+    O rank é por **amostragem softmax (Boltzmann)** por padrão (`temperature`,
+    default 0,2): a ordem é sorteada com chance ∝ `exp(score_norm/τ)`, dando
+    chance a clientes logo abaixo do corte (`gaincurve.softmax_ranking`). `τ=0`
+    recupera o determinístico (ordena por score). Reprodutível pela `seed`
+    (herdada do X-learner) quando nenhum `rng` é passado.
     """
 
     def __init__(
@@ -233,6 +239,8 @@ class BlendedUpliftModel:
         mode: str = "fixed",
         lambda_: float = 0.3,
         gamma: float = 1.0,
+        temperature: float = 0.2,
+        seed: int = 42,
     ) -> None:
         if mode not in ("fixed", "dynamic"):
             raise ValueError(f"mode deve ser 'fixed' ou 'dynamic', não {mode!r}")
@@ -241,6 +249,8 @@ class BlendedUpliftModel:
         self.mode = mode
         self.lambda_ = lambda_
         self.gamma = gamma
+        self.temperature = temperature
+        self.seed = seed
 
     @classmethod
     def from_config(cls, cfg: PipelineConfig) -> "BlendedUpliftModel":
@@ -250,6 +260,8 @@ class BlendedUpliftModel:
             mode=cfg.blend_mode,
             lambda_=cfg.blend_lambda,
             gamma=cfg.blend_gamma,
+            temperature=cfg.blend_temperature,
+            seed=cfg.seed,
         )
 
     def fit(self, train_df: pd.DataFrame) -> "BlendedUpliftModel":
@@ -277,13 +289,18 @@ class BlendedUpliftModel:
         uncertainty = self.uplift_model.predict_uncertainty(df)["uncertainty"]
         return gaincurve.dynamic_hybrid_score(uncertainty, uplift_pred, p_convert, self.gamma)
 
-    def rank(self, df: pd.DataFrame) -> np.ndarray:
-        """Ordem de prioridade dos clientes: índices de `df`, score decrescente.
+    def rank(self, df: pd.DataFrame, rng: np.random.Generator | None = None) -> np.ndarray:
+        """Ordem de prioridade dos clientes: índices de `df`, por amostragem softmax.
 
-        Desempate estável pela ordem do índice — mesma convenção dos rankings de
-        `gaincurve`, para o resultado ser determinístico dada a mesma entrada.
+        Delega a `gaincurve.softmax_ranking` (o mecanismo de rank padrão dos
+        modelos): a ordem é sorteada com chance ∝ `exp(score_norm/τ)`, `τ =
+        self.temperature`. Com `τ=0` degenera no determinístico (ordena por
+        score). `rng` default = `np.random.default_rng(self.seed)`, para o
+        resultado ser reprodutível dada a mesma seed.
         """
-        return self.score(df).sort_values(ascending=False, kind="stable").index.to_numpy()
+        if rng is None:
+            rng = np.random.default_rng(self.seed)
+        return gaincurve.softmax_ranking(self.score(df), self.temperature, rng)
 
     def _effective_lambda(self, df: pd.DataFrame) -> float:
         """Peso λ efetivo do blend, para a combinação linear das importâncias.

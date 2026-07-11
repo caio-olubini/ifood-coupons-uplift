@@ -434,6 +434,47 @@ def random_ranking(holdout_df: pd.DataFrame, cfg: PipelineConfig) -> np.ndarray:
     return rng.permutation(holdout_df.index.to_numpy())
 
 
+def softmax_ranking(
+    score: pd.Series, temperature: float, rng: np.random.Generator
+) -> np.ndarray:
+    """Ranking por **amostragem softmax (Boltzmann)**: chance ∝ `exp(score/τ)`.
+
+    Em vez do corte duro por score decrescente (`uplift_ranking` e afins), cada
+    cliente entra na ordem com probabilidade proporcional a `exp(score_norm/τ)` —
+    quem está logo abaixo do topo ganha chance real de ser priorizado, quem está
+    muito abaixo ganha chance pequena mas não-nula. É o mecanismo de rank padrão
+    dos modelos (`BlendedUpliftModel.rank`, `serve.recommend`): dá exploração ao
+    ranqueamento sem abandonar o sinal do score.
+
+    `score` entra **normalizado min-max** para [0, 1] (`_minmax`) antes do
+    softmax — sem isso, o mesmo `temperature` produziria suavidades diferentes
+    conforme a escala do score (o blend fixo vive em ~[-1, 1.5], o dinâmico em
+    [0, 1]); normalizado, `τ` é uma fração comparável da amplitude do score entre
+    modos e datasets.
+
+    A permutação é uma amostra exata de **Plackett-Luce** (`p_i ∝ exp(score_i/τ)`,
+    sequencial sem reposição) via o **truque de Gumbel-max**: somar ruído
+    `Gumbel(0,1)` a `score_norm/τ` e ordenar por essa chave decrescente produz a
+    mesma distribuição em O(n log n), sem o laço de renormalização. `temperature`
+    controla a suavidade:
+
+    - `τ → 0`: o score domina o ruído → ordena por score (o determinístico atual,
+      o caso especial). Tratado explicitamente (sem divisão por zero).
+    - `τ → ∞`: o ruído domina → permutação uniforme, o limite de `random_ranking`.
+
+    Determinístico dado `rng` (mesma seed → mesma permutação), como
+    `random_ranking`. `score` precisa estar alinhado ao índice do holdout; a saída
+    é a ordem de prioridade (índices, do mais ao menos prioritário).
+    """
+    if temperature <= 0:
+        return score.sort_values(ascending=False, kind="stable").index.to_numpy()
+
+    score_norm = _minmax(score).to_numpy()
+    keys = score_norm / temperature + rng.gumbel(size=len(score_norm))
+    order = np.argsort(-keys, kind="stable")
+    return score.index.to_numpy()[order]
+
+
 def gain_curves(
     rankings: dict[str, np.ndarray], holdout_df: pd.DataFrame
 ) -> pd.DataFrame:

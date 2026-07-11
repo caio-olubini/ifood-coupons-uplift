@@ -144,14 +144,36 @@ def test_blended_dynamic_effective_lambda_is_mean_local_lambda():
 
 def test_blended_from_config_reads_blend_defaults():
     """`from_config` deve materializar o blend padrão da config
-    (`blend_mode`/`blend_lambda`/`blend_gamma`) — o default que `model predict`
-    usa sem argumentos.
+    (`blend_mode`/`blend_lambda`/`blend_gamma`/`blend_temperature`) — o default
+    que `model predict` usa sem argumentos.
     """
-    cfg = load(blend_mode="dynamic", blend_lambda=0.25, blend_gamma=1.5)
+    cfg = load(blend_mode="dynamic", blend_lambda=0.25, blend_gamma=1.5, blend_temperature=0.4)
     blend = BlendedUpliftModel.from_config(cfg)
     assert blend.mode == "dynamic"
     assert blend.lambda_ == 0.25
     assert blend.gamma == 1.5
+    assert blend.temperature == 0.4
+
+
+def test_blended_temperature_default_is_softmax():
+    """O rank padrão dos modelos é softmax: o default de `blend_temperature` é
+    0,2 (>0), não determinístico. Guarda a decisão de que softmax é o padrão.
+    """
+    cfg = load()
+    assert cfg.blend_temperature == 0.2
+    assert BlendedUpliftModel.from_config(cfg).temperature == 0.2
+
+
+def test_blended_rank_e_deterministico_pela_seed():
+    """Duas chamadas a `rank` com a mesma seed dão a mesma permutação amostrada —
+    a estocasticidade do softmax é reprodutível (REQ-110), não flaky.
+    """
+    df = _modeled(synthetic_processed(n=400, seed=9))
+    cfg = load(xlearner_n_estimators=40, blend_temperature=0.2)
+    blend = BlendedUpliftModel.from_config(cfg).fit(df)
+    a = blend.rank(df, rng=np.random.default_rng(cfg.seed))
+    b = blend.rank(df, rng=np.random.default_rng(cfg.seed))
+    np.testing.assert_array_equal(a, b)
 
 
 def test_blended_rejects_unknown_mode():
@@ -177,4 +199,7 @@ def test_blended_save_load_ranks_identically(tmp_path):
     assert path == tmp_path / BLENDED_MODEL_FILENAME
 
     reloaded = BlendedUpliftModel.load(cfg)
-    np.testing.assert_array_equal(blend.rank(df), reloaded.rank(df))
+    np.testing.assert_array_equal(
+        blend.rank(df, rng=np.random.default_rng(cfg.seed)),
+        reloaded.rank(df, rng=np.random.default_rng(cfg.seed)),
+    )

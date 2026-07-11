@@ -24,6 +24,7 @@ from src.gaincurve import (
     hybrid_score,
     incremental_gain_curve,
     random_ranking,
+    softmax_ranking,
     uplift_ranking,
 )
 
@@ -133,6 +134,37 @@ def test_ranking_aleatorio_e_deterministico_pela_seed():
     holdout = _holdout([("a", "o", 1, 0.0, 0.0)] * 5)
     cfg = load()
     assert random_ranking(holdout, cfg).tolist() == random_ranking(holdout, cfg).tolist()
+
+
+def test_softmax_ranking_temperatura_zero_degenera_no_deterministico():
+    """τ→0 recupera o determinístico (ordena por score) — o caso especial que o
+    softmax generaliza; sem isso não haveria retrocompat nem limite bem definido.
+    """
+    score = pd.Series([3.0, 1.0, 2.0, 0.5], index=[10, 20, 30, 40])
+    rng = np.random.default_rng(0)
+    determinístico = score.sort_values(ascending=False, kind="stable").index.tolist()
+    assert softmax_ranking(score, 0.0, rng).tolist() == determinístico
+    assert softmax_ranking(score, 1e-12, rng).tolist() == determinístico
+
+
+def test_softmax_ranking_e_deterministico_pela_seed():
+    """Mesma seed → mesma permutação amostrada (REQ-110): a estocasticidade é
+    reprodutível, como `random_ranking`.
+    """
+    score = pd.Series([0.9, 0.1, 0.5, 0.7, 0.3], index=[1, 2, 3, 4, 5])
+    a = softmax_ranking(score, 0.2, np.random.default_rng(7))
+    b = softmax_ranking(score, 0.2, np.random.default_rng(7))
+    assert a.tolist() == b.tolist()
+
+
+def test_softmax_ranking_e_uma_permutacao_completa():
+    """A saída é uma permutação de todos os índices (mesmo conjunto, sem
+    repetição) — garante que plugga como ranking nas curvas e no serve.
+    """
+    score = pd.Series([0.9, 0.1, 0.5, 0.7, 0.3], index=[11, 22, 33, 44, 55])
+    order = softmax_ranking(score, 0.5, np.random.default_rng(3))
+    assert sorted(order.tolist()) == sorted(score.index.tolist())
+    assert len(order) == len(score)
 
 
 def test_hybrid_score_e_soma_direta_sem_normalizar():

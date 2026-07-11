@@ -25,11 +25,12 @@ decidindo **expor** a oferta.
 
 from __future__ import annotations
 
+import numpy as np
 import pandas as pd
 from pyspark.sql import DataFrame, SparkSession
 from pyspark.sql import functions as F
 
-from src import contract
+from src import contract, gaincurve
 from src.clean import normalize_profile
 from src.cost import add_reward_cost
 from src.features import build
@@ -112,27 +113,41 @@ def build_scoring_frame(
 RECOMMENDATION_COLUMNS = ["rank", "account_id", "offer_id", "offer_type", "score"]
 
 
-def recommend(scored: pd.DataFrame, budget: int) -> pd.DataFrame:
-    """Seleciona as `budget` ações de maior score, uma oferta por cliente.
+def recommend(
+    scored: pd.DataFrame,
+    budget: int,
+    temperature: float = 0.0,
+    rng: np.random.Generator | None = None,
+) -> pd.DataFrame:
+    """Seleciona as `budget` ações, uma oferta por cliente, por amostragem softmax.
 
     `scored` é a matriz de scoring (`build_scoring_frame().toPandas()`) com uma
     coluna `score` já anexada — uma linha por par (cliente, oferta). A seleção é
     em dois passos, refletindo a restrição "uma oferta por cliente":
 
-    1. **Melhor oferta por cliente**: entre as linhas de cada `account_id`, fica
-       a de maior `score` (a oferta que mais move aquele cliente). Desempate
-       estável pela ordem de entrada, para ser determinístico.
-    2. **Top-N por budget**: esses melhores são ordenados por `score` decrescente
-       e cortados nos primeiros `budget` — N ações, N clientes distintos.
+    1. **Melhor oferta por cliente** (sempre determinístico): entre as linhas de
+       cada `account_id`, fica a de maior `score` — a oferta que mais move aquele
+       cliente. A estocasticidade é sobre *quais clientes* entram no budget, não
+       sobre *qual oferta* cada um recebe.
+    2. **Corte por budget via softmax** (`gaincurve.softmax_ranking`): os
+       melhores-por-cliente são ordenados por amostragem com chance ∝
+       `exp(score_norm/τ)` e cortados nos primeiros `budget` — N ações, N
+       clientes distintos, com chance para quem está logo abaixo do corte. É o
+       mecanismo de rank padrão dos modelos (produção incluída), reprodutível
+       pela seed. `temperature=0` recupera o top-N duro por score (determinístico).
 
-    Retorna `RECOMMENDATION_COLUMNS` já ordenado por `rank` (1-based).
+    Retorna `RECOMMENDATION_COLUMNS` já ordenado por `rank` (1-based, a ordem da
+    seleção). `rng` default por seed quando `temperature>0`.
     """
     best_per_client = (
         scored.sort_values("score", ascending=False, kind="stable")
         .groupby("account_id", sort=False)
         .head(1)
     )
-    top = best_per_client.sort_values("score", ascending=False, kind="stable").head(budget)
+    if rng is None:
+        rng = np.random.default_rng()
+    order = gaincurve.softmax_ranking(best_per_client["score"], temperature, rng)
+    top = best_per_client.loc[order].head(budget)
     return (
         top.assign(rank=range(1, len(top) + 1))
         [RECOMMENDATION_COLUMNS]
