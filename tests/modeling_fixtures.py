@@ -44,6 +44,7 @@ def synthetic_processed(n: int = 400, seed: int = 42, n_waves: int = 6) -> pd.Da
         "converted": converted.astype("int32"),
         "conversion_value": conversion_value,
         "reward_cost": reward_cost,
+        "is_recurrent": np.zeros(n, dtype="int32"),
         "age": rng.integers(18, 90, size=n),
         "gender": rng.choice(["M", "F", "O", "unknown"], size=n),
         "credit_card_limit": rng.uniform(500, 20000, size=n),

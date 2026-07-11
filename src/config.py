@@ -44,6 +44,11 @@ class PipelineConfig(BaseSettings):
     # verificado na auditoria — não um parâmetro de derivação.
     n_campaign_waves: int = Field(default=6, gt=0)
 
+    # Janela de recorrência: um recebimento convertido é "recorrente" se o mesmo
+    # cliente tem outra conversão (qualquer oferta) em até N dias após esta.
+    # É derivada do target (`converted`), não uma feature — nunca entra em X.
+    recurrence_window_days: int = Field(default=7, gt=0)
+
     contract_sample_size: int = Field(default=1000, gt=0)
 
     # EDA: parâmetros das visões descritivas (REQ-108, REQ-111).
@@ -118,9 +123,20 @@ class PipelineConfig(BaseSettings):
     blend_lambda_scan: list[float] = Field(default=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0])
 
     # Classificação de quadrante de uplift (persuadable/sure thing/lost cause/
-    # sleeping dog): limiar sobre μ₀/μ₁ previstos (probabilidades) para decidir
-    # "alto" vs "baixo". 0,5 é o ponto natural para um outcome binário.
-    quadrant_probability_threshold: float = Field(default=0.5, gt=0, lt=1)
+    # sleeping dog): corte direto em τ (o efeito em si) em vez de μ₀/μ₁
+    # separados — dois cortes independentes em μ₀/μ₁ não correspondem a uma
+    # curva de nível de τ constante, então um cliente com μ₀=0,49/μ₁=0,51
+    # (τ≈0,02) e outro com μ₀=0,05/μ₁=0,95 (τ=0,90) podiam cair no mesmo
+    # quadrante por acaso de qual lado do limiar cada μ caía. `quadrant_tau_epsilon`
+    # é a banda |τ| < ε onde o efeito é indistinguível de zero: medido como o
+    # desvio da distribuição nula do teste de placebo
+    # (`uplift_eval.placebo_qini_distribution`) no dado real — o ruído do
+    # próprio X-learner, não um número arbitrário. Dentro da banda,
+    # `quadrant_p_convert_threshold` separa sure_thing (converte de qualquer
+    # jeito) de lost_cause (não converte de qualquer jeito); 0,5 é o ponto
+    # natural para uma probabilidade.
+    quadrant_tau_epsilon: float = Field(default=0.0143, gt=0)
+    quadrant_p_convert_threshold: float = Field(default=0.5, gt=0, lt=1)
 
     # Teste de placebo por permutação (REQ-212): réplicas do embaralhamento e o
     # percentil da nula que o Qini real precisa superar. `placebo_confidence_level`

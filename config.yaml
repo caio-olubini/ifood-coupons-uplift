@@ -19,6 +19,10 @@ attribution_priority: earliest_received # earliest_received | latest_received
 # verificado na auditoria — não um parâmetro de derivação.
 n_campaign_waves: 6
 
+# Recorrência: recebimento convertido cujo cliente converteu de novo (qualquer
+# oferta) em até N dias. Derivada do target — nunca vira feature do modelo.
+recurrence_window_days: 7
+
 contract_sample_size: 1000 # nº de linhas amostradas na validação Pydantic do contrato (REQ-107)
 
 # EDA descritiva (REQ-108) e segmentação (REQ-111).
@@ -67,6 +71,18 @@ gain_curve_budgets: [1000, 5000, 10000, 15000]
 # `treatment` e o percentil da distribuição nula que o Qini real precisa superar.
 placebo_n_permutations: 20
 placebo_confidence_level: 0.95
+
+# Classificação de quadrante de uplift (persuadable/sure thing/lost cause/
+# sleeping dog): corte primário em τ, não em μ₀/μ₁ separados — dois cortes
+# independentes em μ₀/μ₁ não correspondem a uma curva de nível de τ constante.
+# quadrant_tau_epsilon é a banda |τ| ≤ ε onde o efeito é indistinguível de
+# zero: medido como o desvio da distribuição nula do teste de placebo acima
+# no dado real, não um número arbitrário. Dentro da banda,
+# quadrant_p_convert_threshold separa sure_thing (converte de qualquer jeito)
+# de lost_cause (não converte de qualquer jeito); 0,5 é o ponto natural para
+# uma probabilidade.
+quadrant_tau_epsilon: 0.02
+quadrant_p_convert_threshold: 0.5
 
 # Tracking de experimentos (REQ-209): SQLite local, sem servidor.
 mlflow_tracking_uri: "sqlite:///mlflow.db"

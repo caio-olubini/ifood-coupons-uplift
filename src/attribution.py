@@ -239,3 +239,45 @@ def build_label(df: DataFrame, cfg: PipelineConfig) -> DataFrame:
         "conversion_value",
         F.when(converted == 1, F.col("assigned_txn_amount_sum")).otherwise(F.lit(0.0)),
     )
+
+
+def add_recurrence_flag(df: DataFrame, cfg: PipelineConfig) -> DataFrame:
+    """`is_recurrent`: recebimento convertido cujo cliente converteu de novo
+    (qualquer oferta) em até `cfg.recurrence_window_days` dias após esta compra.
+
+    Derivada do target (`converted`), não uma feature preditiva — vazaria o
+    próprio rótulo se entrasse em X. Mede recorrência no nível de campanha
+    (todo o dataset), não por cliente isolado: cada linha convertida olha as
+    demais compras atribuídas do mesmo `account_id`, em qualquer oferta, sem
+    reduzir por cliente. Recebimentos com `converted=0` são sempre `is_recurrent=0`
+    — não há segunda compra para ancorar a janela.
+    """
+    conversions = df.filter(F.col("converted") == 1).select(
+        F.col("account_id").alias("_acc"),
+        F.col("offer_id").alias("_other_offer_id"),
+        F.col("received_time").alias("_other_received_time"),
+        F.col("first_assigned_txn_time").alias("_other_txn_time"),
+    )
+
+    pairs = df.filter(F.col("converted") == 1).join(
+        conversions, on=(F.col("account_id") == F.col("_acc")), how="left"
+    ).filter(
+        ~(
+            (F.col("_other_offer_id") == F.col("offer_id"))
+            & (F.col("_other_received_time") == F.col("received_time"))
+        )
+        & (F.col("_other_txn_time") > F.col("first_assigned_txn_time"))
+        & (
+            F.col("_other_txn_time")
+            <= F.col("first_assigned_txn_time") + F.lit(cfg.recurrence_window_days)
+        )
+    )
+
+    recurrent_keys = pairs.select("account_id", "offer_id", "received_time").distinct().withColumn(
+        "is_recurrent", F.lit(1)
+    )
+
+    return (
+        df.join(recurrent_keys, on=["account_id", "offer_id", "received_time"], how="left")
+        .withColumn("is_recurrent", F.coalesce(F.col("is_recurrent"), F.lit(0)))
+    )

@@ -126,9 +126,10 @@ def predict_stages(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.Da
 
     Mesmo cálculo de `stage_diagnostics`, mas devolvendo a estimativa individual
     em vez da média por `offer_type` — é o que a classificação de quadrante
-    (`quadrant.classify_quadrant`) precisa: μ₀/μ₁ por cliente, não a média do
-    grupo. `predict` já devolve τ por linha; esta função adiciona μ₀/μ₁ ao lado,
-    reaproveitando o mesmo laço em vez de rodar o X-learner duas vezes.
+    (`quadrant.classify_quadrant`, que corta em `tau` e `p_convert`) precisa:
+    τ por cliente, não a média do grupo. `predict` já devolve τ por linha; esta
+    função adiciona μ₀/μ₁ ao lado, reaproveitando o mesmo laço em vez de rodar
+    o X-learner duas vezes.
     """
     mu0 = pd.Series(index=df.index, dtype=float)
     mu1 = pd.Series(index=df.index, dtype=float)

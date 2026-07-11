@@ -420,3 +420,21 @@ O balanço de covariáveis tem duas leituras (`src/eda.py`): `covariate_balance`
 viu/não-viu (o que o REQ-109 pede, mas é pós-tratamento) e `assignment_balance` compara
 entre ofertas recebidas (o que de fato verifica a Premissa 4 — envio aleatório). No dado
 real, nenhuma covariável passa do limiar em nenhuma das duas leituras.
+
+**`is_recurrent` foi adicionada ao contrato (2026-07-11, por pedido do usuário).**
+`attribution.add_recurrence_flag`: `converted=1` e o mesmo cliente tem outra
+conversão (qualquer oferta, não só a mesma) até `cfg.recurrence_window_days`
+dias **depois** desta compra ⇒ `is_recurrent=1`. Janela configurável
+(`recurrence_window_days`, default 7, REQ-110) — nada hardcoded. Chamada em
+`pipeline.assemble_processed` logo após `build_label`, antes de `features.build`,
+porque olha o grão inteiro (todas as conversões de todos os clientes), não uma
+única linha. **É derivada do target, não uma feature**: entrou em
+`contract._COLUMNS` (não-nullable) mas em `model_baseline.NON_FEATURE_COLUMNS` —
+`FEATURE_COLUMNS`/`uplift._XLEARNER_FEATURES` a excluem automaticamente por
+derivarem de `CONTRACT_COLUMNS - NON_FEATURE_COLUMNS`. A janela conta só para
+frente a partir de cada conversão (não bidirecional): numa sequência
+conversão→conversão, a primeira fica `is_recurrent=1` se a segunda cai dentro
+da janela; a segunda só fica 1 se houver uma terceira depois dela dentro da
+janela. `test_recurrence_flag_marks_second_conversion_inside_window` e
+`test_recurrence_flag_respects_configurable_window` guardam o grão e o
+parâmetro configurável.

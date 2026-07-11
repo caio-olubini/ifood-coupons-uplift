@@ -16,7 +16,7 @@ from pyspark.sql import functions as F
 from pyspark.sql.window import Window
 
 from src import contract
-from src.attribution import attribute, build_label
+from src.attribution import add_recurrence_flag, attribute, build_label
 from src.clean import normalize_profile
 from src.config import PipelineConfig, load
 from src.cost import add_reward_cost
@@ -75,7 +75,8 @@ def assemble_processed(
     """
     attributed = attribute(events, offers, cfg)
     labeled = build_label(attributed, cfg)
-    featured = build(events, labeled, offers, cfg)
+    with_recurrence = add_recurrence_flag(labeled, cfg)
+    featured = build(events, with_recurrence, offers, cfg)
     priced = add_reward_cost(featured, offers, cfg)
 
     enriched = priced.join(profile, on="account_id", how="left")

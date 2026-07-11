@@ -23,7 +23,7 @@ from src.tracking import start_run
 
 NON_FEATURE_COLUMNS = frozenset({
     "account_id", "offer_id", "received_time", "campaign_wave",
-    "treatment", "converted", "conversion_value", "reward_cost",
+    "treatment", "converted", "conversion_value", "reward_cost", "is_recurrent",
 })
 
 FEATURE_COLUMNS: list[str] = [c for c in CONTRACT_COLUMNS if c not in NON_FEATURE_COLUMNS]

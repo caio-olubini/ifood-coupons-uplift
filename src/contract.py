@@ -45,6 +45,7 @@ _COLUMNS: list[tuple[str, DataType, type, bool]] = [
     ("converted", _INT, int, False),
     ("conversion_value", _DBL, float, False),
     ("reward_cost", _DBL, float, False),
+    ("is_recurrent", _INT, int, False),
     # Features de cliente
     ("age", _INT, int, True),
     ("gender", _STR, str, False),

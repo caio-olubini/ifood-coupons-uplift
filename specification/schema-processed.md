@@ -40,6 +40,7 @@ auditoria verifica a igualdade, não a assume.
 | `converted` | int | 1 se há transação atribuída (na validade, `amount ≥ min_value`); senão 0. **Independe do view** — ver é o tratamento, não o rótulo (G3) |
 | `conversion_value` | double | soma das transações atribuídas (na validade); 0 se não converteu |
 | `reward_cost` | double | custo do desconto concedido (0 para informational e não-convertidos) |
+| `is_recurrent` | int | 1 se `converted=1` **e** o mesmo cliente tem outra conversão (qualquer oferta) até `recurrence_window_days` (config, default 7) dias após esta; 0 caso contrário. Derivada do target — **nunca** entra em X do modelo (vazaria o rótulo) |
 
 ### Features de cliente (do profile, tratando nulos)
 | Coluna | Tipo | Descrição |
