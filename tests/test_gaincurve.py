@@ -151,16 +151,15 @@ def test_hybrid_lambda_maior_puxa_ranking_em_direcao_a_conversao_crua():
 
 
 def test_dynamic_hybrid_score_pondera_por_incerteza_local():
-    """Cliente com mu1==mu0 (incerteza 0) fica só com o uplift normalizado;
-    cliente com maior discrepância |mu1-mu0| do grupo empresta mais peso do
-    prior de conversão. gamma=1 é a resposta linear de referência.
+    """Cliente com incerteza 0 fica só com o uplift normalizado; cliente com a
+    incerteza máxima do grupo empresta todo o peso do prior de conversão.
+    gamma=1 é a resposta linear de referência.
     """
-    mu0 = pd.Series([0.5, 0.2, 0.1])
-    mu1 = pd.Series([0.5, 0.2, 0.9])   # "a" incerteza 0, "b" incerteza 0, "c" incerteza máxima
-    uplift_pred = pd.Series([0.0, 0.0, 0.0])   # uplift_norm empatado em tudo
+    uncertainty = pd.Series([0.0, 0.0, 0.8])   # "a"/"b" certeza total, "c" incerteza máxima
+    uplift_pred = pd.Series([0.0, 0.0, 0.0])    # uplift_norm empatado em tudo
     p_convert = pd.Series([0.1, 0.5, 0.9])
 
-    score = dynamic_hybrid_score(mu0, mu1, uplift_pred, p_convert, gamma=1.0)
+    score = dynamic_hybrid_score(uncertainty, uplift_pred, p_convert, gamma=1.0)
 
     # "a" e "b" têm incerteza zero -> lambda_local=0 -> score = uplift_norm (empatado, 0
     # porque uplift_pred é constante e uplift_norm degenera em 0 pelo epsilon do denominador).
@@ -178,13 +177,12 @@ def test_dynamic_hybrid_gamma_alto_e_mais_conservador():
     linha 0 tem uplift alto/p_convert baixo, então "mais peso ao uplift" ali
     significa score MAIOR.
     """
-    mu0 = pd.Series([0.0, 0.0])
-    mu1 = pd.Series([0.5, 1.0])          # incerteza normalizada: 0.5 e 1.0
-    uplift_pred = pd.Series([1.0, 0.0])  # linha 0 favorecida pelo uplift
-    p_convert = pd.Series([0.0, 1.0])    # linha 0 desfavorecida pela conversão crua
+    uncertainty = pd.Series([0.5, 1.0])   # incerteza normalizada: 0.5 e 1.0
+    uplift_pred = pd.Series([1.0, 0.0])   # linha 0 favorecida pelo uplift
+    p_convert = pd.Series([0.0, 1.0])     # linha 0 desfavorecida pela conversão crua
 
-    score_gamma_baixo = dynamic_hybrid_score(mu0, mu1, uplift_pred, p_convert, gamma=0.5)
-    score_gamma_alto = dynamic_hybrid_score(mu0, mu1, uplift_pred, p_convert, gamma=2.0)
+    score_gamma_baixo = dynamic_hybrid_score(uncertainty, uplift_pred, p_convert, gamma=0.5)
+    score_gamma_alto = dynamic_hybrid_score(uncertainty, uplift_pred, p_convert, gamma=2.0)
 
     # Na linha de incerteza intermediária (índice 0), gamma alto empresta MENOS
     # peso ao prior de conversão (lambda_local menor) -> score mais próximo do
@@ -193,13 +191,12 @@ def test_dynamic_hybrid_gamma_alto_e_mais_conservador():
 
 
 def test_dynamic_hybrid_ranking_e_deterministico_e_ordena_decrescente():
-    mu0 = pd.Series([0.1, 0.1, 0.1])
-    mu1 = pd.Series([0.2, 0.9, 0.15])
+    uncertainty = pd.Series([0.1, 0.8, 0.05])
     uplift_pred = pd.Series([0.1, 0.9, 0.5])
     p_convert = pd.Series([0.9, 0.1, 0.5])
 
-    ranking = dynamic_hybrid_ranking(mu0, mu1, uplift_pred, p_convert, gamma=1.0)
-    score = dynamic_hybrid_score(mu0, mu1, uplift_pred, p_convert, gamma=1.0)
+    ranking = dynamic_hybrid_ranking(uncertainty, uplift_pred, p_convert, gamma=1.0)
+    score = dynamic_hybrid_score(uncertainty, uplift_pred, p_convert, gamma=1.0)
     assert ranking.tolist() == score.sort_values(ascending=False, kind="stable").index.tolist()
 
 

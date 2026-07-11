@@ -9,8 +9,8 @@ top-N daquela estratégia.
 Três estratégias entram, todas rankeando o mesmo holdout:
 
 - **modelo de uplift** — ordena por τ previsto (o X-learner);
-- **conversão crua** — ordena por P(converte) previsto (`policy_top_completion`,
-  o baseline que ignora incrementalidade e mira quem converte de qualquer jeito);
+- **conversão crua** — ordena por P(converte) previsto, o baseline que ignora
+  incrementalidade e mira quem converte de qualquer jeito;
 - **aleatório** — ordem uniforme (seed da config), a linha de base sem sinal.
 
 Mais uma família, o **modelo híbrido** (`hybrid_score`/`hybrid_ranking`,
@@ -23,13 +23,17 @@ favorece conversão crua (ticket alto) sobre o uplift causal puro
 que empresta um pouco do sinal de conversão crua recupera parte do lucro em
 R$ sem abrir mão de toda a ordenação causal?
 
-E o **híbrido dinâmico** (`dynamic_hybrid_score`/`dynamic_hybrid_ranking`,
-2026-07-10): em vez de um λ fixo para o holdout inteiro, o peso varia por
-cliente, proporcional à incerteza local do X-learner (`|mu1 − mu0|` dos dois
-sub-modelos de `uplift.predict_stages`, já calculados). Onde o X-learner
-discorda muito consigo mesmo, o score confia mais no prior de conversão; onde
-concorda, confia no uplift quase puro. `cfg.dynamic_hybrid_gamma_grid`
-(default `[0.5, 1.0, 2.0]`) varia a agressividade da resposta à incerteza.
+E o **híbrido dinâmico** (`dynamic_hybrid_score`/`dynamic_hybrid_ranking`): em
+vez de um λ fixo para o holdout inteiro, o peso varia por cliente, proporcional
+à **incerteza da estimativa de τ** — a discordância interna do X-learner entre
+seus dois estimadores de CATE (`|dhat_t − dhat_c|`, de
+`uplift.predict_cate_uncertainty`). Onde a estimativa é menos confiável, o score
+confia mais no prior de conversão; onde é confiável, confia no uplift quase puro.
+`cfg.dynamic_hybrid_gamma_grid` (default `[0.5, 1.0, 2.0]`) varia a agressividade
+da resposta à incerteza. `best_lambda_by_decile` é o diagnóstico exploratório que
+motiva essa família (mostra se o λ ideal varia com o budget); `dynamic_lambda_by_budget`
+mostra como o peso do híbrido dinâmico de fato se comporta ao longo do budget,
+γ a γ.
 
 **Por que não IPW nem Direct Method.** Ambos avaliam sobre *receita bruta
 realizada* (`conversion_value − reward_cost` de fato ocorrido), que soma a
@@ -55,11 +59,7 @@ concedido a quem atinge o `min_value` na validade, **view ou não**
 (`test_unviewed_conversion_still_costs`) — o controle pode converter e pagar
 desconto de verdade, não é imune por não ter visto a oferta. Não há assimetria
 nenhuma a impor aqui: cada linha carrega seu lucro real, e `L_controle(N)` na
-fórmula acima já inclui qualquer `reward_cost` que o controle de fato pagou. A
-assimetria de REQ-204 (custo total vs. receita incremental) é da **política
-prospectiva** (`policy.expected_net_profit`, que debita `P(converte|tratado) ×
-discount_value` porque ainda não observou quem converte); aqui o dado já
-aconteceu, então cada linha usa seu próprio `reward_cost` realizado.
+fórmula acima já inclui qualquer `reward_cost` que o controle de fato pagou.
 
 **Conversão incremental é a mesma fórmula sobre `converted`.** `converted` é
 0/1 por linha (sem a assimetria de custo do lucro — não há desconto a debitar
@@ -86,7 +86,7 @@ import numpy as np
 import pandas as pd
 import plotly.graph_objects as go
 
-from src import policy, uplift, viz
+from src import uplift, viz
 from src.config import PipelineConfig
 
 TREATMENT_COLUMN = "treatment"
@@ -168,9 +168,9 @@ def uplift_ranking(uplift_pred: pd.DataFrame) -> np.ndarray:
 def completion_ranking(p_convert: pd.Series) -> np.ndarray:
     """Ranking pela conversão crua: P(converte) previsto decrescente.
 
-    É a estratégia `policy_top_completion` (REQ-205) em forma de ranking global:
-    mira quem tem maior propensão a converter, ignorando se a oferta *causa* a
-    conversão. `p_convert` vem do baseline preditivo, alinhado ao holdout.
+    Mira quem tem maior propensão a converter, ignorando se a oferta *causa* a
+    conversão — a estratégia que o modelo de uplift precisa bater.
+    `p_convert` vem do baseline preditivo, alinhado ao holdout.
     """
     return p_convert.sort_values(ascending=False, kind="stable").index.to_numpy()
 
@@ -200,60 +200,155 @@ def hybrid_ranking(uplift_pred: pd.Series, p_convert: pd.Series, lambda_: float)
     ).index.to_numpy()
 
 
+def _minmax(s: pd.Series) -> pd.Series:
+    """Normaliza para [0, 1] no próprio holdout (epsilon evita divisão por zero)."""
+    return (s - s.min()) / (s.max() - s.min() + 1e-9)
+
+
 def dynamic_hybrid_score(
-    mu0: pd.Series, mu1: pd.Series, uplift_pred: pd.Series, p_convert: pd.Series, gamma: float = 1.0
+    uncertainty: pd.Series, uplift_pred: pd.Series, p_convert: pd.Series, gamma: float = 1.0
 ) -> pd.Series:
-    """Blend uplift + conversão crua, com peso local em vez de λ fixo (2026-07-10).
+    """Blend uplift + conversão crua, com peso local pela **incerteza** do τ.
 
     Onde `hybrid_score` usa um λ constante para o holdout inteiro,
-    `dynamic_hybrid_score` deixa o peso variar **por cliente**, proporcional à
-    incerteza do X-learner naquele ponto: a discrepância `|mu1 − mu0|` entre os
-    dois sub-modelos de estágio (`uplift.predict_stages`) — já calculados, não
-    custa nada extra. Onde os dois sub-modelos concordam pouco entre si, o τ
-    final é menos confiável, e o score empresta mais peso do prior de
-    conversão; onde concordam bem (baixa discrepância), o score confia no
-    uplift quase puro.
+    `dynamic_hybrid_score` deixa o peso variar **por cliente**: onde a estimativa
+    de τ é menos confiável, o score empresta mais peso do prior de conversão;
+    onde é confiável, confia no uplift quase puro. `uncertainty` é essa medida
+    de confiança — `uplift.predict_cate_uncertainty` fornece a discordância
+    interna do X-learner (`|dhat_t − dhat_c|`), a incerteza da própria
+    estimativa, não o tamanho do efeito.
 
-    Os dois termos entram **normalizados min-max no próprio holdout** (min 0,
-    máx 1) antes do blend — diferente de `hybrid_score`, que soma os scores
-    brutos. Aqui a normalização é necessária: o peso `lambda_local` é uma
-    fração em [0, 1] que faz sentido como *combinação convexa*
-    (`(1-λ)·uplift + λ·p_convert`) só se os dois termos já estiverem na mesma
-    escala — misturar τ bruto (que pode ser negativo) com uma fração em [0,1]
-    quebraria a interpretação de "peso".
+    Os dois termos entram **normalizados min-max** antes do blend — diferente de
+    `hybrid_score`, que soma os scores brutos. Aqui a normalização é necessária:
+    `lambda_local` é uma fração em [0, 1] e a combinação convexa
+    `(1-λ)·uplift + λ·p_convert` só faz sentido com os dois termos na mesma escala.
 
-        incerteza = |mu1 − mu0|
-        incerteza_norm = incerteza / max(incerteza)
+        incerteza_norm = uncertainty / max(uncertainty)
         lambda_local = incerteza_norm ** gamma
         score = (1 - lambda_local) · uplift_norm + lambda_local · p_convert_norm
 
-    `gamma` controla a agressividade da resposta à incerteza: `gamma=1`
-    responde linearmente; `gamma>1` só empresta peso relevante nos casos de
-    incerteza muito alta (mais conservador, blend concentrado nos extremos);
-    `gamma<1` empresta peso já em incerteza moderada (mais agressivo, blend
-    espalhado por mais do ranking). Todas as séries precisam estar alinhadas
-    pelo mesmo índice do holdout.
+    A incerteza é escalada pelo **máximo** (não min-max): incerteza 0 precisa
+    mapear em `lambda_local = 0` (confiança total no uplift), o que subtrair o
+    mínimo do grupo destruiria. Já `uplift_pred`/`p_convert` são min-max: ali só
+    a posição relativa importa, não o zero.
+
+    `gamma` controla a agressividade da resposta à incerteza: `gamma=1` responde
+    linearmente; `gamma>1` só empresta peso relevante na incerteza muito alta
+    (conservador); `gamma<1` empresta peso já em incerteza moderada (agressivo).
+    Todas as séries precisam estar alinhadas pelo mesmo índice do holdout.
     """
-    incerteza = (mu1 - mu0).abs()
-    incerteza_norm = incerteza / (incerteza.max() + 1e-9)
-    lambda_local = incerteza_norm**gamma
-
-    uplift_norm = (uplift_pred - uplift_pred.min()) / (uplift_pred.max() - uplift_pred.min() + 1e-9)
-    p_convert_norm = (p_convert - p_convert.min()) / (p_convert.max() - p_convert.min() + 1e-9)
-
-    return (1 - lambda_local) * uplift_norm + lambda_local * p_convert_norm
+    lambda_local = (uncertainty / (uncertainty.max() + 1e-9)) ** gamma
+    return (1 - lambda_local) * _minmax(uplift_pred) + lambda_local * _minmax(p_convert)
 
 
 def dynamic_hybrid_ranking(
-    mu0: pd.Series, mu1: pd.Series, uplift_pred: pd.Series, p_convert: pd.Series, gamma: float = 1.0
+    uncertainty: pd.Series, uplift_pred: pd.Series, p_convert: pd.Series, gamma: float = 1.0
 ) -> np.ndarray:
     """Ranking pelo score híbrido dinâmico (`dynamic_hybrid_score`) decrescente.
 
     Mesma convenção de desempate estável de `uplift_ranking`/`hybrid_ranking`.
     """
-    return dynamic_hybrid_score(mu0, mu1, uplift_pred, p_convert, gamma).sort_values(
+    return dynamic_hybrid_score(uncertainty, uplift_pred, p_convert, gamma).sort_values(
         ascending=False, kind="stable"
     ).index.to_numpy()
+
+
+def best_lambda_by_decile(
+    uplift_pred: pd.Series,
+    p_convert: pd.Series,
+    holdout_df: pd.DataFrame,
+    lambda_grid: list[float],
+) -> pd.DataFrame:
+    """Exploração suja: por decil de budget, qual λ fixo maximiza o lucro ali?
+
+    Para cada λ do grid, mede o lucro incremental do híbrido (`hybrid_ranking`)
+    nos cortes de 10%, 20%, … 100% do holdout; para cada decil, devolve o λ que
+    rende mais. Se o λ ótimo variar de decil para decil, um λ **dinâmico** tem o
+    que ganhar sobre um λ fixo; se for constante, não. Diagnóstico que motiva (ou
+    descarta) o híbrido dinâmico — não entra na política.
+
+    Retorna `[decil, melhor_lambda, gain]`, um por decil.
+    """
+    holdout_with_profit = add_net_profit(holdout_df)
+    n = len(holdout_df)
+    decile_budgets = [round(n * d / 10) for d in range(1, 11)]
+
+    gain_por_lambda = {}
+    for lam in lambda_grid:
+        ranking = hybrid_ranking(uplift_pred, p_convert, lam)
+        curva = incremental_gain_curve(np.arange(n), holdout_with_profit.loc[ranking].reset_index(drop=True))
+        gain_por_lambda[lam] = curva.set_index("n").loc[decile_budgets, "gain"].to_numpy()
+
+    tabela = pd.DataFrame(gain_por_lambda, index=range(1, 11))
+    return pd.DataFrame({
+        "decil": tabela.index,
+        "melhor_lambda": tabela.idxmax(axis=1).to_numpy(),
+        "gain": tabela.max(axis=1).to_numpy(),
+    })
+
+
+def fig_best_lambda_by_decile(best: pd.DataFrame, theme: str = "light") -> go.Figure:
+    """λ ótimo por decil de budget (`best_lambda_by_decile`), em barras.
+
+    Barras de altura constante = um λ fixo já é ótimo em todo budget; barras que
+    sobem ou descem = o λ ideal depende do budget, e um peso dinâmico tem espaço.
+    """
+    fig = viz.figure(
+        "λ ótimo por decil de budget: dinamizar λ tem potencial?",
+        "Para cada corte top-N%, o λ do híbrido fixo que maximiza o lucro incremental. Variação = espaço para λ dinâmico.",
+        theme=theme,
+    )
+    fig.add_trace(go.Bar(
+        x=[f"D{d}" for d in best["decil"]], y=best["melhor_lambda"],
+        marker_color=viz.palette(theme)[0],
+    ))
+    return viz.add_bar_labels(fig, template="%{y:.2f}", theme=theme)
+
+
+def dynamic_lambda_by_budget(
+    uncertainty: pd.Series,
+    uplift_pred: pd.Series,
+    p_convert: pd.Series,
+    gamma_grid: list[float],
+) -> pd.DataFrame:
+    """λ_local médio acumulado nos top-N do ranking, para cada γ do grid.
+
+    `dynamic_hybrid_score` calcula um `lambda_local` por cliente; esta função
+    ordena o holdout pelo score de cada γ (mesmo ranking usado para o ganho) e
+    acumula a média de `lambda_local` dentro de cada prefixo top-N — como o
+    peso efetivo do prior de conversão se comporta ao longo do budget, γ a γ.
+
+    Retorna `[gamma, n, lambda_medio]`, uma linha por N (todo o holdout) e γ.
+    """
+    partes = []
+    for gamma in gamma_grid:
+        lambda_local = (uncertainty / (uncertainty.max() + 1e-9)) ** gamma
+        ranking = dynamic_hybrid_ranking(uncertainty, uplift_pred, p_convert, gamma)
+        lambda_ordenado = lambda_local.loc[ranking].to_numpy()
+        media_acumulada = np.cumsum(lambda_ordenado) / np.arange(1, len(lambda_ordenado) + 1)
+        partes.append(pd.DataFrame({
+            "gamma": gamma,
+            "n": np.arange(1, len(lambda_ordenado) + 1),
+            "lambda_medio": media_acumulada,
+        }))
+    return pd.concat(partes, ignore_index=True)
+
+
+def fig_dynamic_lambda_by_budget(evolucao: pd.DataFrame, theme: str = "light") -> go.Figure:
+    """λ_local médio acumulado por budget, uma série por γ (`dynamic_lambda_by_budget`)."""
+    fig = viz.figure(
+        "Peso do híbrido dinâmico ao longo do budget",
+        "λ_local médio acumulado nos top-N, por γ.",
+        theme=theme,
+    )
+    cores = viz.palette(theme)
+    for i, (gamma, grupo) in enumerate(evolucao.groupby("gamma")):
+        cor = cores[i % len(cores)]
+        fig.add_trace(go.Scatter(
+            x=grupo["n"], y=grupo["lambda_medio"], name=f"γ={gamma}",
+            mode="lines", line=dict(color=cor, width=2.5),
+        ))
+    return viz.add_end_labels(fig, theme=theme)
 
 
 def random_ranking(holdout_df: pd.DataFrame, cfg: PipelineConfig) -> np.ndarray:

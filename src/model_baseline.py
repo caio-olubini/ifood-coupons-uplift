@@ -85,10 +85,9 @@ def train(
 def predict_conversion_probability(model: LGBMClassifier, df: pd.DataFrame) -> pd.Series:
     """P(converted=1 | x) prevista pelo LGBM, alinhada ao índice de `df`.
 
-    É μ₁ — a propensão a converter —, não o uplift. Serve a dois consumidores:
-    o termo de custo da política (`policy.expected_net_profit`, onde o desconto
-    é debitado em toda conversão) e o baseline *top-completion* (REQ-205), que
-    aloca exatamente por este número e é o que a política precisa bater.
+    É μ₁ — a propensão a converter —, não o uplift. É o prior de "conversão
+    crua" reusado pelo estudo de blends (`gaincurve.hybrid_score`) e por
+    `uplift_eval.qini_by_strategy` como estratégia de comparação.
     """
     return pd.Series(model.predict_proba(_design_matrix(df))[:, 1], index=df.index)
 

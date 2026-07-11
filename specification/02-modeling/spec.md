@@ -113,78 +113,27 @@ Acceptance:
 - GIVEN uma permutação THEN a proporção tratado/controle de cada `offer_type` é
   idêntica à original.
 
-### REQ-213 — Calibração da magnitude do uplift
-WHEN o modelo de uplift é avaliado, the system SHALL medir não só a **ordenação** (REQ-203)
-mas a **calibração da magnitude**: agrupar o holdout em bins por τ previsto e, em cada bin,
-comparar o uplift **previsto** médio contra o uplift **observado** — a diferença entre a
-taxa de conversão dos tratados e a dos controles *dentro do bin*.
+### ~~REQ-213 — Calibração da magnitude do uplift~~ (descontinuado)
+Removido por decisão do usuário (2026-07-10), junto com REQ-204/REQ-205 (política e
+baselines de alocação): o diagnóstico de calibração media magnitude para uma política que
+não existe mais no projeto. Saíram `uplift_eval.calibration_by_bin`, `calibration_error`,
+`fig_calibration`, o campo `cfg.calibration_n_bins` e seus testes.
 
-Qini pode ser alto com magnitude errada: um modelo que prevê 40 p.p. onde o efeito real é
-4 p.p. ordena perfeitamente e ainda assim mente sobre o tamanho — e a política de REQ-204
-multiplica esse número por receita, então erro de magnitude vira erro de R$. A calibração
-é o que separa "ordena bem" de "acerta o quanto".
+### ~~REQ-214 — Calibração isotônica pós-hoc~~ (descontinuado)
+Removido por decisão do usuário (2026-07-10): a correção isotônica reescalava a **magnitude**
+prevista de τ sem tocar a **ordenação** (Qini) — dependia de REQ-213, também descontinuada.
 
-O uplift observado num bin exige tratados **e** controles no bin (é uma diferença de duas
-taxas). Um bin sem um dos braços não tem uplift observável e SHALL ser marcado inavaliável,
-não reportado como zero — mesmo princípio de positividade da Premissa 8 aplicado por bin.
+### ~~REQ-204 — Política sensível a custo~~ (descontinuado)
+Removido por decisão do usuário (2026-07-10): o projeto passou a focar a avaliação de
+modelos de uplift em Qini/AUUC e na curva de ganho incremental por budget (REQ-206), sem uma
+etapa de alocação por cliente. `src/policy.py` (`offer_economics`, `expected_net_profit`,
+`allocate`) foi removido inteiro, com `tests/test_policy.py`.
 
-Acceptance:
-- GIVEN o holdout com τ previsto THEN há, por bin, o uplift previsto médio e o observado
-  (tratado − controle), mais um resumo do erro de calibração (ex.: MAE previsto vs. observado).
-- GIVEN um bin sem tratado ou sem controle THEN seu uplift observado é marcado inavaliável,
-  não zero.
-
-### REQ-214 — Calibração isotônica pós-hoc
-WHEN a magnitude do uplift (REQ-213) está mal calibrada, the system SHALL ajustar uma
-correção isotônica (`sklearn.isotonic.IsotonicRegression`) que mapeia τ previsto → τ
-calibrado, monotônica por construção (preserva a ordenação de REQ-203, corrige só a
-magnitude), e reportar as estatísticas de calibração (MAE, bias, por bin) **antes e
-depois** da correção, lado a lado.
-
-O ajuste usa **cross-fitting dentro do holdout** (`cfg.calibration_n_folds`): cada fold é
-avaliado com a isotônica ajustada nos outros folds, nunca na sua própria fatia — senão o
-"depois" aprende no mesmo dado que reporta e fica otimista por construção. Não há um
-terceiro split dedicado (o holdout já é a fatia mais recente do dado); cross-fitting reusa
-100% do holdout para o "depois" sem violar a disciplina de nunca avaliar no que foi usado
-para ajustar.
-
-Acceptance:
-- GIVEN o uplift bruto e o calibrado THEN há uma tabela ou par de resumos (MAE, bias) para
-  os dois, no mesmo holdout, permitindo comparação direta.
-- GIVEN dois pontos calibrados pela **mesma** isotônica (mesmo fold) THEN a ordem de seus
-  τ previstos nunca é invertida — a garantia de monotonicidade é por fold, não global:
-  cross-fitting usa uma isotônica distinta por fold (ajustada nos outros folds), então a
-  ordem entre pontos de folds diferentes pode mudar.
-- GIVEN a correção isotônica THEN nenhum ponto do holdout é avaliado pela isotônica
-  ajustada com esse mesmo ponto (ou com o bin que o contém).
-
-### REQ-204 — Política sensível a custo
-WHEN a alocação é decidida, the system SHALL escolher, por cliente, a oferta (ou "não enviar")
-que maximiza `uplift_receita − custo_desconto`, entre as ofertas de **cupom/promoção**
-(`offer_type` ∈ {`bogo`, `discount`}) recebidas e a ação nula.
-
-`informational` está **fora de escopo**: não é cupom nem promoção, é uma ação de comunicação
-sem desconto associado. Decidir alocação de ações informacionais (quando, para quem, com que
-mensagem) é um estudo à parte, não uma extensão desta política — mesmo que o dado tenha
-`informational` com custo zero e portanto qualquer uplift positivo o tornasse "lucrativo" por
-acidente de contabilidade, não por decisão de produto.
-
-Acceptance:
-- GIVEN uma oferta com uplift alto mas custo maior que o ganho THEN não é escolhida.
-- GIVEN um sure thing / sleeping dog THEN "não enviar" pode vencer.
-- GIVEN uma oferta `informational` entre as opções do cliente THEN nunca é escolhida, mesmo
-  com uplift alto e custo zero.
-
-### REQ-205 — Baselines de política
-The system SHALL definir três políticas de comparação, restritas ao mesmo escopo de REQ-204
-(`bogo`, `discount`): aleatória (oferta uniforme a todos, entre as elegíveis), enviar-a-todos
-(status quo que gerou os dados, entre as elegíveis) e top-completion (aloca por probabilidade
-prevista de completar, entre as elegíveis).
-
-Acceptance:
-- GIVEN o conjunto de avaliação THEN cada baseline produz uma recomendação por cliente com
-  pelo menos uma oferta elegível.
-- GIVEN uma oferta `informational` entre as opções do cliente THEN nenhum baseline a escolhe.
+### ~~REQ-205 — Baselines de política~~ (descontinuado)
+Removido junto com REQ-204 — os três baselines de alocação (`policy_random`,
+`policy_send_all`, `policy_top_completion`) não têm mais uma política para comparar. Os
+baselines de **estratégia de ranking** (uplift puro, conversão crua, aleatório) continuam
+vivos em `uplift_eval.qini_by_strategy`/`gaincurve`, sob REQ-203/REQ-206.
 
 ### REQ-206 — Avaliação offline por curva de ganho incremental (budget top-N)
 WHEN as estratégias de alocação são avaliadas offline, the system SHALL comparar seu **lucro

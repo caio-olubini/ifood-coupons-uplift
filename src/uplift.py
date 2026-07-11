@@ -148,6 +148,32 @@ def predict_stages(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.Da
     return df[[*GRAIN_COLUMNS, OFFER_TYPE_COLUMN]].assign(mu0=mu0, mu1=mu1, tau=tau)
 
 
+def predict_cate_uncertainty(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.DataFrame:
+    """Incerteza da estimativa de τ **por linha**: a discordância interna do X-learner.
+
+    O X-learner combina dois estimadores de CATE — `dhat_c`, ajustado sobre os
+    controles, e `dhat_t`, sobre os tratados — em `τ = p·dhat_c + (1−p)·dhat_t`.
+    Onde os dois discordam, o efeito é menos identificado: `|dhat_t − dhat_c|`
+    é uma medida honesta de **incerteza da própria estimativa**, não do tamanho
+    do efeito (o que `|mu1 − mu0|` mediria). `predict(..., return_components=True)`
+    devolve os dois componentes sem custo extra de ajuste.
+
+    Retorna `[account_id, offer_id, received_time, offer_type, uncertainty]` na
+    ordem de linha de `df` — a mesma convenção de `predict`.
+    """
+    uncertainty = pd.Series(index=df.index, dtype=float)
+    for offer_type, group in df.groupby(OFFER_TYPE_COLUMN):
+        model = models[offer_type]
+        p = fixed_propensity(group[TREATMENT_COLUMN].to_numpy())
+        _, dhat_c, dhat_t = model.predict(
+            X=_design_matrix(group), p=p, return_components=True, verbose=False
+        )
+        arm = model.t_groups[0]
+        uncertainty.loc[group.index] = np.abs(dhat_t[arm] - dhat_c[arm])
+
+    return df[[*GRAIN_COLUMNS, OFFER_TYPE_COLUMN]].assign(uncertainty=uncertainty)
+
+
 def label_by_arm(df: pd.DataFrame) -> pd.DataFrame:
     """Estrutura do outcome dentro de cada braço, por `offer_type`.
 

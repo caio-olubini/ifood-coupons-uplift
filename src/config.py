@@ -105,10 +105,17 @@ class PipelineConfig(BaseSettings):
     hybrid_lambda_grid: list[float] = Field(default=[0.0, 0.1, 0.3, 0.5])
 
     # Estratégia híbrida dinâmica (gaincurve.dynamic_hybrid_score): peso λ_local
-    # por cliente, proporcional à incerteza |mu1 − mu0| do X-learner elevada a
-    # γ. γ=1 é resposta linear; γ>1 concentra o blend nos extremos de incerteza
-    # (conservador); γ<1 espalha o blend por mais do ranking (agressivo).
+    # por cliente, proporcional à incerteza do τ (discordância interna do
+    # X-learner, uplift.predict_cate_uncertainty) elevada a γ. γ=1 é resposta
+    # linear; γ>1 concentra o blend nos extremos de incerteza (conservador);
+    # γ<1 espalha o blend por mais do ranking (agressivo).
     dynamic_hybrid_gamma_grid: list[float] = Field(default=[0.5, 1.0, 2.0])
+
+    # Grid fino de λ para a exploração suja gaincurve.best_lambda_by_decile —
+    # qual λ fixo maximiza cada decil de budget. Diagnóstico exploratório (motiva
+    # o híbrido dinâmico), não entra na política; por isso um grid mais denso que
+    # hybrid_lambda_grid, sem custo de manter os dois alinhados.
+    blend_lambda_scan: list[float] = Field(default=[0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.7, 1.0])
 
     # Classificação de quadrante de uplift (persuadable/sure thing/lost cause/
     # sleeping dog): limiar sobre μ₀/μ₁ previstos (probabilidades) para decidir
@@ -121,15 +128,6 @@ class PipelineConfig(BaseSettings):
     # não coincidência (ver `uplift_eval.placebo_test`).
     placebo_n_permutations: int = Field(default=20, gt=0)
     placebo_confidence_level: float = Field(default=0.95, gt=0, lt=1)
-
-    # Calibração da magnitude do uplift (REQ-213): nº de bins de τ previsto em que
-    # o uplift previsto médio é comparado ao observado (tratado − controle no bin).
-    calibration_n_bins: int = Field(default=10, gt=1)
-
-    # Calibração isotônica pós-hoc (REQ-214): cross-fitting dentro do holdout —
-    # cada fold prevê com a isotônica ajustada nos outros folds, nunca na sua
-    # própria fatia, para o "depois" não ficar otimista por ver o próprio dado.
-    calibration_n_folds: int = Field(default=5, gt=1)
 
     # Tracking de experimentos (REQ-209): SQLite local, sem servidor — MLflow
     # 3.x descontinuou o backend de arquivo puro (./mlruns) em favor de banco.

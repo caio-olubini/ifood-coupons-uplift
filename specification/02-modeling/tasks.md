@@ -58,38 +58,16 @@
 - **Nota:** Qini AUC = 0,038 no holdout, sobre as 25.469 linhas sem inflar. O 0,548
   anterior refletia μ₀ ≡ 0 somado ao join duplicado — era artefato, não desempenho.
 
-## T-206 — Política sensível a custo
-- **Status:** [x]
-- **Satisfies:** REQ-204
-- **Depends on:** T-204
-- **Files:** `src/policy.py`, `tests/test_policy.py`
-- **Do:** `argmax(uplift_receita − custo)` por cliente, incluindo "não enviar"; saída tipada.
-- **Accept:** T-policy-noturno passa — custo > ganho ⇒ não enviar.
-- **Economia do lucro:** receita esperada é **incremental** (`uplift × receita_por_conversão`);
-  custo é **total** (`P(converte|tratado) × discount_value`), porque o desconto é debitado em
-  toda conversão da oferta, causada ou não. Custo é por `offer_id` (o `discount_value` do
-  catálogo), não por `offer_type` — o `plan.md` diz o contrário e está errado; `config.yaml`
-  já registrava o porquê. No holdout: a política recusa envio a 4.636 de 15.919 clientes
-  (29,1%) e sobe o lucro esperado de R$ 2,52 para R$ 3,50 por cliente.
-- **Escopo restrito a cupom/promoção (2026-07-10):** `informational` saiu do universo de
-  ofertas candidatas (`ELIGIBLE_OFFER_TYPES = ("bogo", "discount")` em `src/policy.py`,
-  filtrado em `offer_economics`/`expected_net_profit`). O caso ("qualquer uplift positivo em
-  `informational` é lucrativo, custo zero") deixou de ser uma virtude do design e passou a
-  ser exatamente o que a política evita escolher — decisão de produto: o escopo aqui é
-  distribuição de cupons e promoções, ação informacional é estudo à parte. Números do
-  holdout acima medidos **antes** do corte; precisam remedição depois de T-208/T-209 se o
-  R$ final for reportado.
+## ~~T-206 — Política sensível a custo~~ (descontinuada)
+- **Status:** removida (2026-07-10, decisão do usuário — ver REQ-204 riscada em `spec.md`).
+- **Motivo:** o projeto deixou de ter uma etapa de alocação por cliente; a avaliação de
+  modelos de uplift passou a ser só Qini/AUUC e a curva de ganho por budget (REQ-206).
+  `src/policy.py` e `tests/test_policy.py` foram removidos inteiros.
 
-## T-207 — Baselines de política
-- **Status:** [x]
-- **Satisfies:** REQ-205
-- **Depends on:** T-203, T-206
-- **Files:** `src/policy.py`, `tests/test_policy.py`
-- **Do:** Aleatória, enviar-a-todos, top-completion (usa o baseline preditivo).
-- **Accept:** cada baseline produz recomendação por cliente no conjunto de avaliação.
-- **Nota:** `policy_send_all` **carrega lucro negativo** quando toda oferta do cliente dá
-  prejuízo — é justamente o custo do status quo que a política evita ao poder não enviar.
-  Clipar em zero apagaria a comparação que REQ-206 vai fazer.
+## ~~T-207 — Baselines de política~~ (descontinuada)
+- **Status:** removida junto com T-206 — sem política de alocação, não há o que os
+  baselines de alocação comparem. Os baselines de **ranking** (uplift/conversão
+  crua/aleatório) continuam em `uplift_eval.qini_by_strategy`/`gaincurve`.
 
 ## T-212 — Teste de placebo por permutação
 - **Status:** [x]
@@ -106,38 +84,15 @@
   cálculo, duas leituras (significância e incerteza). No holdout real, ver
   `notebooks/2_modeling.ipynb` §5 para os números medidos.
 
-## T-213 — Calibração da magnitude do uplift
-- **Status:** [x]
-- **Satisfies:** REQ-213
-- **Depends on:** T-204, T-205
-- **Files:** `src/uplift_eval.py`, `src/config.py`, `tests/test_uplift_eval.py`
-- **Do:** Binnar o holdout por τ previsto (`cfg.calibration_n_bins`); por bin, comparar o
-  uplift previsto médio contra o observado (taxa de conversão tratado − controle no bin);
-  resumir o erro (MAE, bias). Bin sem tratado ou sem controle é inavaliável, não zero.
-- **Accept:** T-calibracao passa — previsto ≈ observado dá MAE pequeno; modelo que infla a
-  magnitude tem bias > 0 com Qini idêntico; bin sem contrafactual fica NaN/inavaliável.
-- **Nota:** Qini (ordenação) e calibração (magnitude) são ortogonais — um modelo pode
-  ordenar bem e mentir sobre o tamanho, e é o tamanho que a política (REQ-204) multiplica
-  por receita. No holdout real: MAE 0,102, bias −0,069 (subestima, erra o sinal nos bins
-  de τ negativo). Números em `notebooks/2_modeling.ipynb` §6.
+## ~~T-213 — Calibração da magnitude do uplift~~ (descontinuada)
+- **Status:** removida (2026-07-10, decisão do usuário — ver REQ-213 riscada em `spec.md`).
+- **Motivo:** dependia da política (REQ-204), também removida — sem alocação, não há R$
+  a jusante que a magnitude calibrada precisasse acertar. `calibration_by_bin`,
+  `calibration_error`, `fig_calibration`, `cfg.calibration_n_bins` e seus testes saíram.
 
-## T-214 — Calibração isotônica pós-hoc
-- **Status:** [x]
-- **Satisfies:** REQ-214
-- **Depends on:** T-213
-- **Files:** `src/uplift_eval.py`, `src/config.py`, `tests/test_uplift_eval.py`
-- **Do:** Ajustar `IsotonicRegression` (τ previsto → τ calibrado) por cross-fitting dentro
-  do holdout (`cfg.calibration_n_folds`): cada fold é calibrado por uma isotônica ajustada
-  nos bins dos outros folds, nunca no próprio. Reportar MAE/bias antes e depois lado a
-  lado.
-- **Accept:** T-calibracao-isotonica passa — MAE cai depois da correção quando a magnitude
-  estava inflada; monotonicidade vale por fold (garantia local do `IsotonicRegression`, não
-  global entre folds); nenhum ponto é calibrado por uma isotônica ajustada com ele mesmo;
-  fold sem bins avaliáveis suficientes sai sem correção, não com um valor inventado.
-- **Nota:** no holdout real, a correção reduz o MAE de **0,102 para 0,019** (5,3×) e o bias
-  de **−0,069 para −0,001** — o previsto pós-calibração acompanha de perto o observado em
-  9 dos 10 bins (um colapsou por `duplicates="drop"` num fold específico). A ordenação
-  (Qini) não muda: a isotônica só reescala a magnitude.
+## ~~T-214 — Calibração isotônica pós-hoc~~ (descontinuada)
+- **Status:** removida (2026-07-10, decisão do usuário — ver REQ-214 riscada em `spec.md`).
+- **Motivo:** dependia de T-213, também removida.
 
 ## T-208 — Curva de ganho incremental por budget top-N
 - **Status:** [x]
@@ -156,23 +111,15 @@
   contrafactual Qini (controle acumulado escalado pela razão tratado/controle do prefixo), agora
   sobre lucro líquido em vez de conversão: a **receita** entra como incremental (diferença
   escalada), o **custo do desconto** só nos tratados reais (o desconto só é pago em conversão de
-  tratado, não no contrafactual) — a mesma assimetria de `policy.expected_net_profit`, herdada da
-  subtração escalada sem regra especial. `NO_SEND` deixa de ser um caso à parte: a curva compara
-  rankings, não estima o valor absoluto de "não enviar" (o que dispensa REQ-207).
-- **Composição por quadrante e % lucro negativo (2026-07-10):** `src/quadrant.py`
-  (`uplift.predict_stages` — μ₀/μ₁/τ por linha, extraído de `uplift.stage_diagnostics` —
-  e `classify_quadrant`/`quadrant_distribution`/`policy_composition`/
-  `negative_profit_share`) explica **de quem** vem a divergência acima. Achado principal:
-  `pct_lucro_negativo` (fração de clientes enviados com `net_profit<0`, §7) é **1,1%** na
-  política de uplift contra 36,7% (enviar-a-todos), 43,8% (top-completion) e 44,4%
-  (aleatória) — a política quase elimina o envio com prejuízo esperado. E o tamanho bate
-  com precisão: os 36,05% de clientes em `nao_enviar` são quase idênticos aos 36,74% de
-  `pct_lucro_negativo` de `enviar-a-todos` — a recusa está isolando quase exatamente o
-  conjunto que teria dado prejuízo, **não** os quadrantes causais "ruins" isolados
-  (`sleeping_dog`+`sure_thing` com lucro negativo somam só 0,36% do holdout). Ou seja: a
-  recusa segue o **custo do desconto por oferta** (`discount_value`), não a classificação
-  causal pura. Limiar de quadrante configurável (`cfg.quadrant_probability_threshold`, default
-  0,5). Ver `notebooks/2_modeling.ipynb` §8.2.
+  tratado, não no contrafactual) — assimetria que dependia de `policy.expected_net_profit`,
+  removida com REQ-204/T-206.
+- **Composição por quadrante (`src/quadrant.py`, `classify_quadrant`/`quadrant_distribution`,
+  a partir de `uplift.predict_stages`):** segue vivo como diagnóstico de composição do
+  holdout por μ₀/μ₁. `policy_composition`/`negative_profit_share` — que cruzavam essa
+  composição com a saída da política — foram removidos junto com `src/policy.py`
+  (2026-07-10); o achado histórico que comparavam (percentual de lucro negativo por
+  estratégia de alocação) não se aplica mais, pois a política não existe. Limiar de
+  quadrante configurável (`cfg.quadrant_probability_threshold`, default 0,5).
 
 ## ~~T-209 — Impacto em R$~~ (descontinuado, 2026-07-10)
 - **Status:** [~]

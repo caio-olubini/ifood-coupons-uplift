@@ -131,31 +131,42 @@ A suíte de testes automatizados (`tests/`, ~36 testes) cobre o comportamento
 estrutural — ver a nota de filosofia de testes acima; EDA e figuras são
 verificadas rodando os notebooks, não pela suíte.
 
-Spec 02 (modelagem, `specification/02-modeling/`) em andamento — T-201 a T-208,
-T-212, T-213 e T-214 implementados: config de
-modelagem estendida, split temporal por `campaign_wave` (`src/split.py`), baseline
-preditivo logística+LGBM com tracking MLflow (`src/model_baseline.py`,
-`src/tracking.py`), X-learner por `offer_type` (`src/uplift.py`), avaliação
-Qini/AUUC (`src/uplift_eval.py`, via `sklift`), teste de placebo por permutação
-(REQ-212), calibração da magnitude do uplift (REQ-213) e correção isotônica
-pós-hoc por cross-fitting (REQ-214) — todos em `src/uplift_eval.py` — política
-sensível a custo + três baselines (`src/policy.py`) e a avaliação offline por
-**curva de ganho incremental por budget top-N** (`src/gaincurve.py`, REQ-206/T-208).
-`notebooks/2_modeling.ipynb` roda tudo de ponta a ponta sobre o dado real e cresce
-seção a seção com as próximas tasks. `auc_lgbm=0.85` supera `auc_logit=0.80` (T-203 ok).
+Spec 02 (modelagem, `specification/02-modeling/`) em andamento — T-201 a T-203,
+T-205, T-208 e T-212 implementados (T-204/T-206/T-207/T-213/T-214 removidas, ver
+abaixo): config de modelagem estendida, split temporal por `campaign_wave`
+(`src/split.py`), baseline preditivo logística+LGBM com tracking MLflow
+(`src/model_baseline.py`, `src/tracking.py`), X-learner por `offer_type`
+(`src/uplift.py`), avaliação Qini/AUUC (`src/uplift_eval.py`, via `sklift`), teste
+de placebo por permutação (REQ-212) e a avaliação offline por **curva de ganho
+incremental por budget top-N** (`src/gaincurve.py`, REQ-206/T-208).
+`notebooks/2_modeling.ipynb` roda tudo de ponta a ponta sobre o dado real.
+`auc_lgbm=0.85` supera `auc_logit=0.80` (T-203 ok).
+
+**Política sensível a custo, seus baselines e a calibração de magnitude foram
+removidas do projeto por decisão do usuário (2026-07-10).** `src/policy.py`
+(`offer_economics`, `expected_net_profit`, `allocate`, os três baselines de
+alocação) e `tests/test_policy.py` foram apagados inteiros; REQ-204/REQ-205
+ficam `~~riscadas~~` em `spec.md`, com T-206/T-207 riscadas em `tasks.md`. A
+calibração de magnitude (`uplift_eval.calibration_by_bin`/`calibration_error`/
+`fig_calibration`, REQ-213) dependia da política para fazer sentido (o erro de
+magnitude vira erro de R$ só quando alguém multiplica τ por receita numa
+alocação) e saiu junto, arrastando a correção isotônica (REQ-214, já removida
+antes). `src/quadrant.py` perdeu `policy_composition`/`negative_profit_share`
+(dependiam da saída de `allocate`) mas manteve `classify_quadrant`/
+`quadrant_distribution`, que só olham μ₀/μ₁ do X-learner. `ELIGIBLE_OFFER_TYPES`
+virou `split.MODELED_OFFER_TYPES` — só `src/split.py` ainda precisava da tupla.
+O projeto avalia modelos de uplift por Qini/AUUC e pela curva de ganho por
+budget; não há mais uma etapa de "decidir a quem enviar".
 
 **`informational` saiu da modelagem por decisão do usuário (2026-07-10).**
 `split.exclude_informational` filtra `offer_type == informational` logo após
 `temporal_split`, antes de `toPandas()` — o único ponto de entrada de
 `train_df`/`holdout_df` no notebook. Nenhum modelo a jusante (baseline
-preditivo, X-learner, Qini/placebo/calibração, curva de ganho) o vê mais;
-antes, `fit_xlearner` ajustava um terceiro braço para `informational` e as
-métricas agregadas (Qini, holdout de 25.469 linhas) o misturavam com
-bogo/discount. `informational` já estava fora do escopo de `src/policy.py`
-(`ELIGIBLE_OFFER_TYPES`) desde 2026-07-10; agora o mesmo escopo vale para a
-modelagem inteira, não só a alocação. Todos os números abaixo (Qini, placebo,
-calibração, curva de ganho) foram medidos **sem** informational — holdout
-20.412 linhas, não 25.469.
+preditivo, X-learner, Qini/placebo, curva de ganho) o vê mais; antes,
+`fit_xlearner` ajustava um terceiro braço para `informational` e as métricas
+agregadas (Qini, holdout de 25.469 linhas) o misturavam com bogo/discount.
+Todos os números abaixo (Qini, placebo, curva de ganho) foram medidos **sem**
+informational — holdout 20.412 linhas, não 25.469.
 
 **`reward_cost` só existe em conversão real, controle incluso — não é uma
 assimetria a impor no lucro líquido.** `cost.add_reward_cost` (G6) já zera
@@ -169,10 +180,7 @@ desconto a pagar" e foi corrigido (2026-07-10); `L_controle(N)` na fórmula do
 contrafactual escalado sempre incluiu qualquer `reward_cost` real do
 controle. `test_net_profit_desconta_reward_cost_tambem_no_controle` e
 `test_net_profit_e_zero_quando_nao_converteu_sem_reward_cost_solto` guardam os
-dois lados do invariante. A assimetria de REQ-204 (custo total × receita
-incremental) é da política **prospectiva** (`policy.expected_net_profit`, que
-ainda não observou quem converte); sobre dado já realizado, cada linha carrega
-seu próprio custo.
+dois lados do invariante.
 
 **Qini/AUUC por estratégia (2026-07-10, por pedido do usuário) mostra a
 inversão que a curva de ganho em R$ escondia.** `uplift_eval.qini_by_strategy`/
@@ -182,29 +190,31 @@ aleatório — não só ao X-learner. No holdout real: **Qini 0,034 / AUUC 0,040
 (modelo de uplift) contra **0,009 / −0,006** (conversão crua) e **−0,012 /
 −0,012** (aleatório). O modelo de uplift é a única estratégia que concentra
 efeito incremental real — a conversão crua mal supera o aleatório em Qini e
-fica **pior** que ele em AUUC. Isso contradiz a curva de ganho em R$ (§8, onde
-conversão crua domina em lucro): os dois olhares medem coisas diferentes — Qini
-mede se a ordenação captura o *efeito causal*, a curva de ganho mede *lucro*, e
-lucro pesa ticket médio, não incrementalidade. A conversão crua ganha em R$
-porque manda para quem tem ticket alto, não porque identifica quem a oferta de
-fato move.
+fica **pior** que ele em AUUC. Isso contradiz a curva de ganho em R$ (a mesma
+comparação, medida em lucro em vez de Qini): os dois olhares medem coisas
+diferentes — Qini mede se a ordenação captura o *efeito causal*, a curva de
+ganho mede *lucro*, e lucro pesa ticket médio, não incrementalidade. A
+conversão crua ganha em R$ porque manda para quem tem ticket alto, não porque
+identifica quem a oferta de fato move.
 
 **Estratégia híbrida X-learner + λ·conversão crua (2026-07-10, por pedido do
 usuário) recupera parte do lucro em R$ sem abandonar a ordenação causal.**
 `gaincurve.hybrid_score`/`hybrid_ranking`: `score = uplift_x_learner + λ ·
 p_convert_cru`, soma direta sem normalizar (os dois termos já vivem em escalas
 parecidas). Grid `cfg.hybrid_lambda_grid = [0, 0,1, 0,3, 0,5]`; λ=0 é o modelo
-de uplift puro, o ponto de controle do grid, não um caso à parte. Exposto no
-notebook em §4.2 (Qini/AUUC do grid) e em §8 (curva de ganho em R$, um
-ranking por λ ao lado das três estratégias originais).
+de uplift puro, o ponto de controle do grid, não um caso à parte. O estudo de
+blends + comparação com baselines vive numa seção dedicada do notebook (§4,
+"Estudo de Qini/AUUC": §4.1 baselines, §4.2 λ fixo, §4.3 λ dinâmico + os dois
+gráficos exploratórios, §4.4 comparação final); a curva de ganho por budget
+(R$) é a seção seguinte, §5, separada — mede lucro, não ordenação.
 
-No holdout real, **λ=0,3 tem o melhor Qini/AUUC do grid inteiro — melhor que o
-modelo de uplift puro**: Qini 0,051 / AUUC 0,048 (λ=0,3) contra 0,034 / 0,040
+No holdout real, **λ=0,3 tem o melhor Qini/AUUC do grid de λ fixo — melhor que
+o modelo de uplift puro**: Qini 0,051 / AUUC 0,048 (λ=0,3) contra 0,034 / 0,040
 (λ=0, uplift puro); λ=0,1 e λ=0,5 ficam no meio (0,047/0,050 e 0,047/0,041). Um
 pouco de sinal de conversão crua **melhora** a ordenação causal em vez de
 dilui-la — provavelmente porque `p_convert` carrega informação preditiva que o
 X-learner, treinado com menos dado por braço (μ₀/μ₁ separados), não captura
-tão bem sozinho. Na curva de ganho em R$ (§8), λ=0,3/0,5 se aproximam ou
+tão bem sozinho. Na curva de ganho em R$ (§5), λ=0,3/0,5 se aproximam ou
 superam conversão crua nos budgets maiores (budget 10.000: híbrido λ=0,3 =
 R$78.208 supera conversão crua R$68.015; uplift puro fica em R$55.348) — o
 híbrido não é só um meio-termo entre os dois extremos, é estritamente melhor
@@ -213,30 +223,47 @@ que ambos em alguns pontos do grid. `test_hybrid_score_e_soma_direta_sem_normali
 `test_hybrid_lambda_maior_puxa_ranking_em_direcao_a_conversao_crua` guardam a
 fórmula e o caso de controle λ=0.
 
-**Híbrido dinâmico (λ local por incerteza do X-learner, 2026-07-10, por pedido
-do usuário) não bate o λ=0,3 fixo — testado e descartado como estritamente
-melhor.** `gaincurve.dynamic_hybrid_score`: peso `lambda_local = (|mu1−mu0| /
-max|mu1−mu0|) ** γ` por cliente, em vez de um λ constante — a ideia é emprestar
-mais peso ao prior de conversão exatamente onde os dois sub-modelos do
-X-learner (μ₀/μ₁, `uplift.predict_stages`) discordam mais entre si. Testado com
-`cfg.dynamic_hybrid_gamma_grid = [0,5, 1,0, 2,0]` contra uplift puro, conversão
-crua e híbrido λ=0,3 fixo (notebook §4.3), nas mesmas duas métricas.
+**Híbrido dinâmico por incerteza do X-learner (reformulado 2026-07-10, por
+pedido do usuário) agora BATE o λ=0,3 fixo — a versão anterior por `|mu1−mu0|`
+foi trocada por uma medida de incerteza genuína.** O peso local passou a ser
+`lambda_local = (incerteza / max(incerteza)) ** γ`, onde `incerteza` é a
+**discordância interna do X-learner entre seus dois estimadores de CATE**
+(`|dhat_t − dhat_c|`, `uplift.predict_cate_uncertainty`, via
+`predict(..., return_components=True)`) — a incerteza da própria estimativa de
+τ, não o tamanho do efeito (o que `|mu1−mu0| = |τ|` media, um proxy ruim). Onde
+os dois CATE discordam, o τ é menos identificado e o score empresta mais do
+prior de conversão. A incerteza é escalada pelo **máximo** (não min-max) para
+incerteza 0 → `lambda_local` 0; `uplift`/`p_convert` são min-max. Grid
+`cfg.dynamic_hybrid_gamma_grid = [0,5, 1,0, 2,0]`, notebook §4.3.
 
-**Qini/AUUC: nenhum γ bate λ=0,3 fixo.** λ=0,3 fixo = 0,051/0,048; o melhor
-dinâmico (γ=1,0) fica em 0,048/0,048, e γ=0,5/γ=2,0 pioram mais (0,041/0,033 e
-0,039/0,044). **Curva de ganho em R$: resultado misto, não estritamente
-melhor.** No budget 1.000, γ=0,5 supera λ=0,3 fixo (R$12.002 vs R$7.048) — o
-peso dinâmico ajuda quando o budget é pequeno e concentrado nos casos de maior
-incerteza. Mas no budget 10.000, λ=0,3 fixo volta a dominar todos os γs
-(R$78.208 vs o melhor dinâmico, γ=0,5, em R$69.233). **Veredito:** o híbrido
-dinâmico não é uma estratégia estritamente dominante — perde em ordenação
-causal (Qini/AUUC) e só ganha em R$ no budget mais restrito. λ=0,3 fixo
-continua sendo o melhor ponto do espaço de estratégias testado até aqui.
+**Qini/AUUC: γ=1,0 é o melhor de todo o espaço testado.** dinâmico γ=1,0 =
+**0,069/0,073**, acima do λ=0,3 fixo (0,051/0,048), de todo o grid de λ fixo e
+do uplift puro (0,034/0,040); γ=0,5 = 0,065/0,061, γ=2,0 = 0,045/0,052. **Curva
+de ganho em R$: dinâmico vira o melhor no budget grande.** No budget 10.000, o
+dinâmico γ=1,0 dá **R$78.386** — acima da conversão crua (R$68.015), do λ=0,3
+fixo (R$78.208) e do uplift puro (R$55.348); nos budgets menores a conversão
+crua ainda domina em R$ (ticket alto). **Veredito:** trocar o proxy de tamanho
+de efeito por incerteza de estimativa foi o que fez o peso dinâmico valer —
+`|mu1−mu0|` empresta peso onde o efeito é grande, `|dhat_t − dhat_c|` empresta
+onde a estimativa é frágil, e é a segunda leitura que melhora a ordenação. Com
+esses dois achados, §4.4 (comparação final) compara os baselines contra
+justamente os dois melhores blends: λ=0,3 fixo e γ=1,0 dinâmico — e é esse
+mesmo par que a curva de ganho por budget (§5) usa.
 `test_dynamic_hybrid_score_pondera_por_incerteza_local`,
 `test_dynamic_hybrid_gamma_alto_e_mais_conservador` e
 `test_dynamic_hybrid_ranking_e_deterministico_e_ordena_decrescente` guardam a
-fórmula, não o resultado do grid — o resultado é um achado do dado real, não
-um invariante a testar.
+fórmula (agora sobre `uncertainty`), não o resultado do grid — o resultado é um
+achado do dado real, não um invariante a testar.
+
+**Dois diagnósticos exploratórios acompanham o híbrido dinâmico em §4.3, sem
+entrar na política ou em teste dedicado (analytics, não garantia).**
+`gaincurve.best_lambda_by_decile` varre `cfg.blend_lambda_scan` e, por decil de
+budget, registra o λ fixo que maximiza o lucro incremental ali — se o λ ótimo
+varia de decil para decil, um λ dinâmico tem espaço para ganhar do fixo.
+`gaincurve.dynamic_lambda_by_budget` mede o outro lado: como o `lambda_local`
+médio do híbrido dinâmico de fato evolui ao longo do budget, para cada γ do
+grid — não é "qual λ seria ideal" (isso é o decil), é "qual λ o dinâmico está
+de fato aplicando".
 
 **Qini e a curva de ganho em R$ são apples-to-apples — verificado (2026-07-10,
 por pedido do usuário).** O híbrido domina conversão crua com folga em Qini/AUUC
@@ -257,13 +284,13 @@ acima ("conversão crua ganha em R$ porque manda para quem tem ticket alto"),
 agora confirmado numericamente ponto a ponto, não só em agregado.
 
 **Avaliação offline = curva de ganho incremental por budget (T-208, REQ-206), não
-IPW.** `src/gaincurve.py` compara estratégias (modelo de uplift × conversão crua ×
-aleatório) pela pergunta "dado um budget de N clientes, quanto lucro líquido
-incremental os top-N de cada estratégia entregam?". Cada estratégia é um *ranking*;
-o ganho de cada prefixo top-N sai do **contrafactual observado no dado real** (estilo
-Qini: controle acumulado escalado pela razão tratado/controle do prefixo), não de
-predição. Eixo Y = lucro líquido incremental: receita incremental (diferença escalada)
-menos o desconto pago **só nos tratados reais** — a assimetria de `policy.expected_net_profit`.
+IPW.** `src/gaincurve.py` compara estratégias (baselines + os dois melhores blends,
+§4.4) pela pergunta "dado um budget de N clientes, quanto lucro líquido
+incremental os top-N de cada estratégia entregam?" — notebook §5. Cada estratégia
+é um *ranking*; o ganho de cada prefixo top-N sai do **contrafactual observado no
+dado real** (estilo Qini: controle acumulado escalado pela razão tratado/controle
+do prefixo), não de predição. Eixo Y = lucro líquido incremental: receita
+incremental (diferença escalada) menos o desconto pago **só nos tratados reais**.
 **IPW e Direct Method saíram de escopo por decisão do usuário (2026-07-10):** avaliavam
 sobre receita bruta realizada (`conversion_value − reward_cost` ocorrido), que soma a
 conversão causada com a espontânea — não isolam o incremental. Removidos junto com
@@ -271,9 +298,10 @@ conversão causada com a espontânea — não isolam o incremental. Removidos ju
 REQ-207/208/211 e T-209 descontinuados nas specs (ficam como `~~riscado~~`, com o porquê).
 **Achado real, registrado:** no dado real a **conversão crua domina** o modelo de uplift em
 todos os budgets na curva de *lucro* (o eixo premia ticket alto, não incrementalidade pura —
-Qini honesto é só 0,034); o uplift supera a aleatória nos budgets maiores. O valor da política
-de uplift está tanto no envio quanto na **recusa** dos ~36% que dariam prejuízo — a curva mede
-só o envio; a economia da recusa é a composição de §8.1 do notebook. As duas métricas convivem.
+Qini honesto é só 0,034); o uplift supera a aleatória nos budgets maiores, e os blends
+(λ=0,3 fixo, γ=1,0 dinâmico) se aproximam ou superam a conversão crua nos budgets
+maiores sem abrir mão de tanta ordenação causal. As duas métricas (Qini e R$) convivem
+e respondem perguntas diferentes.
 
 **A curva de ganho também devolve conversão incremental e IC (2026-07-10, por pedido do
 usuário).** `gaincurve.incremental_gain_curve`/`gain_curves` trazem `conversions` ao lado de
@@ -308,25 +336,15 @@ fura o percentil 95 (0,0186) com p-valor empírico 0/20. Baixo, mas real.
 `test_label_impossible_in_control_degenerates_uplift_into_mu1` fixa a assinatura
 numérica da regressão.
 
-**Ordenação e magnitude são coisas diferentes (T-213, REQ-213).** Qini mede se o
-modelo *ordena* o efeito; `uplift_eval.calibration_by_bin` mede se ele acerta o
-*tamanho*: por bin de τ previsto, compara o uplift previsto médio ao observado
-(taxa tratado − controle no bin). No holdout real o modelo ordena de forma útil
-(uplift observado sobe ~0,02 → ~0,16 do bin baixo ao alto) mas a **magnitude é mal
-calibrada**: MAE 0,116, bias −0,098 (subestima na média), e erra o sinal nos bins de
-τ negativo. Bin sem tratado ou sem controle é inavaliável (positividade por bin),
-nunca zero.
-
-**A correção isotônica (T-214, REQ-214) resolve a magnitude, não a ordenação.**
-`uplift_eval.isotonic_calibrate_cross_fitted` ajusta `IsotonicRegression` (τ
-previsto → τ calibrado) por cross-fitting dentro do holdout: cada fold de
-`cfg.calibration_n_folds` é previsto por uma isotônica ajustada nos bins dos
-*outros* folds, nunca no próprio — senão o "depois" aprenderia no mesmo dado que
-avalia. No holdout real: MAE **0,116 → 0,020** (5,8×), bias **−0,098 → 0,001**
-(praticamente zero). A ordenação (Qini) não muda — a isotônica só reescala. O R$
-da política deixa de ser puramente direcional; ainda carrega a incerteza do
-confundimento residual abaixo, mas a magnitude prevista agora bate com o
-observado no próprio holdout.
+**Calibração de magnitude e correção isotônica (T-213/T-214, REQ-213/REQ-214)
+foram REMOVIDAS por decisão do usuário (2026-07-10), junto com a política.**
+`uplift_eval.calibration_by_bin`/`calibration_error`/`fig_calibration` mediam se
+o modelo acerta o *tamanho* do efeito (Qini mede só a *ordenação*) — mas o erro
+de magnitude só vira erro de R$ quando alguém multiplica τ por receita numa
+alocação, e essa etapa não existe mais no projeto. Saíram junto
+`isotonic_calibrate_cross_fitted`, `calibration_before_after`,
+`fig_calibration_before_after` (já removidas antes) e `cfg.calibration_n_bins`;
+REQ-213/REQ-214/T-213/T-214 ficam `~~riscadas~~` nas specs, com o porquê.
 
 **Confundimento residual, registrado:** `treatment` = viu continua sendo escolha
 do cliente, não braço aleatorizado (o randomizado foi o *envio*, Premissa 4). O
@@ -339,18 +357,16 @@ na ordem da entrada. Sem `received_time` a chave não é única (mesma oferta em
 duas ondas) e o join do notebook inflava o holdout de 25.469 para 27.365 linhas —
 todo Qini reportado antes desta correção estava contaminado.
 
-A política (`src/policy.py`, REQ-204) trata receita como **incremental**
-(`uplift × receita_por_conversão`) e custo como **total**
-(`P(converte|tratado) × discount_value`): o desconto é debitado em toda conversão
-da oferta, causada ou não. O custo é por `offer_id` (catálogo), não por
-`offer_type` — o `plan.md` dizia o contrário e foi corrigido. `policy_send_all`
-carrega lucro negativo de propósito — é o custo do status quo.
-
-A seção 7 do notebook (que chamava `policy.allocate`/`policy_send_all`/
-`policy_top_completion`/`policy_random` e comparava recusa/lucro por cliente)
-foi removida por decisão do usuário (2026-07-10); `notebooks/2_modeling.ipynb`
-hoje só chama `offer_economics`/`expected_net_profit` (score, sem alocar). As
-tabelas de composição (§8.1) usam `stages`/`scored`, não a saída de `allocate`.
+**A política sensível a custo (`src/policy.py`, REQ-204) e seus três baselines de
+alocação (REQ-205) foram removidos inteiros por decisão do usuário (2026-07-10)**
+— tratavam receita como incremental (`uplift × receita_por_conversão`) e custo
+como total (`P(converte|tratado) × discount_value`), decidindo por cliente quem
+recebe qual oferta. O projeto deixou de ter essa etapa de alocação; a avaliação
+de modelos de uplift é só Qini/AUUC (§4 do notebook) e a curva de ganho por
+budget (§5) — nenhuma das duas decide a quem enviar, só ordena e mede.
+`notebooks/2_modeling.ipynb` não chama mais `policy.*`; `src/quadrant.py`
+(§6, composição por quadrante) usa só `uplift.predict_stages`, sem a saída de
+uma política.
 
 O X-learner exige propensity fixa explícita (taxa de view observada por
 `offer_type`, não estimada) porque o `LogisticRegressionCV` default do CausalML
