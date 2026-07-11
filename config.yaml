@@ -58,18 +58,23 @@ xlearner_n_estimators: 200
 xlearner_max_depth: -1
 xlearner_learning_rate: 0.05
 
-# Avaliação offline por IPW (REQ-206, REQ-207).
-ipw_min_propensity: 0.001
-ipw_confidence_level: 0.95
+# Avaliação offline: curva de ganho incremental por budget top-N (REQ-206).
+# Budgets destacados na leitura "se meu budget for N, quanto ganho cada
+# estratégia?" — a curva inteira é varrida; estes são só os pontos tabelados.
+gain_curve_budgets: [1000, 5000, 10000]
 
 # Teste de placebo por permutação (REQ-212): réplicas do embaralhamento de
 # `treatment` e o percentil da distribuição nula que o Qini real precisa superar.
 placebo_n_permutations: 20
 placebo_confidence_level: 0.95
 
-# Dimensionamento do próximo A/B (REQ-211).
-ab_test_power: 0.8
-ab_test_alpha: 0.05
+# Calibração da magnitude do uplift (REQ-213): nº de bins de τ previsto onde o
+# uplift previsto médio é comparado ao observado (tratado − controle no bin).
+calibration_n_bins: 10
+
+# Calibração isotônica pós-hoc (REQ-214): cross-fitting dentro do holdout, cada
+# fold avaliado com a isotônica ajustada nos outros folds.
+calibration_n_folds: 5
 
 # Tracking de experimentos (REQ-209): SQLite local, sem servidor.
 mlflow_tracking_uri: "sqlite:///mlflow.db"

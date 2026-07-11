@@ -1,9 +1,15 @@
 """Política de alocação sensível a custo (REQ-204) e baselines (REQ-205).
 
 Escolhe, por cliente, a oferta que maximiza `uplift_receita − custo_esperado`
-entre todas as ofertas recebidas e a **ação nula** ("não enviar"), cujo lucro é
-exatamente zero. Assim "não enviar" vence sempre que nenhuma oferta tiver ganho
-esperado positivo — o critério de REQ-204.
+entre todas as ofertas **de cupom/promoção recebidas** (`bogo`, `discount`) e a
+**ação nula** ("não enviar"), cujo lucro é exatamente zero. Assim "não enviar"
+vence sempre que nenhuma oferta tiver ganho esperado positivo — o critério de
+REQ-204.
+
+`informational` fica fora do escopo desta política: não é cupom nem promoção,
+é uma ação de comunicação sem desconto associado, e decidir alocação desse tipo
+de ação é um estudo à parte. `offer_economics` filtra o tipo na entrada, então
+`allocate` e os três baselines nunca o veem como candidato.
 
 Três decisões de modelagem de lucro, cada uma imposta pelo dado, não escolhida:
 
@@ -20,10 +26,6 @@ Três decisões de modelagem de lucro, cada uma imposta pelo dado, não escolhid
 3. **`uplift` é Δ P(converted)**, um número adimensional. Vira receita
    multiplicando pela receita média por conversão da oferta
    (`revenue_per_conversion`), medida no conjunto de referência.
-
-`informational` tem `discount_value = 0`: custo esperado zero, logo qualquer
-uplift positivo a torna lucrativa. É a alavanca de graça, e a política a
-encontra sem regra especial.
 """
 
 from __future__ import annotations
@@ -38,6 +40,16 @@ NO_SEND = "nao_enviar"
 
 #: Lucro da ação nula. Não enviar não gera receita nem custa desconto.
 NO_SEND_NET_PROFIT = 0.0
+
+#: Tipos de oferta que a política pode alocar. `informational` é ação de
+#: comunicação, não cupom/promoção — fora do escopo desta política; se algum
+#: dia entrar, é um estudo à parte, não uma extensão silenciosa desta lista.
+ELIGIBLE_OFFER_TYPES = ("bogo", "discount")
+
+
+def _only_eligible(reference: pd.DataFrame) -> pd.DataFrame:
+    """Restringe o conjunto de referência aos tipos de oferta elegíveis (REQ-204)."""
+    return reference[reference["offer_type"].isin(ELIGIBLE_OFFER_TYPES)]
 
 
 class PolicyRecommendation(BaseModel):
@@ -66,7 +78,11 @@ def offer_economics(reference: pd.DataFrame) -> pd.DataFrame:
     valor do catálogo nas conversões pagas. Uma oferta sem nenhuma conversão no
     conjunto de referência não tem receita observável; fica com receita 0 e
     nunca é escolhida — inavaliável, não lucrativa por omissão.
+
+    Filtra a `ELIGIBLE_OFFER_TYPES` antes de tudo: `informational` não entra na
+    economia da política, então nem aparece como candidato mais adiante.
     """
+    reference = _only_eligible(reference)
     convertidas = reference[reference["converted"] == 1]
 
     receita = (
@@ -94,9 +110,16 @@ def expected_net_profit(
     oferta, tenha ela sido causada ou não. Essa assimetria é o coração de
     REQ-204: uma oferta cara com uplift pequeno paga desconto para clientes que
     já iriam converter, e perde para a ação nula.
+
+    `p_convert_treated` está alinhado posicionalmente a `uplift`, então o
+    filtro de `ELIGIBLE_OFFER_TYPES` (`informational` fora) precisa acontecer
+    **antes** de zipar os dois — nunca depois, ou o alinhamento quebra.
     """
-    df = uplift.merge(economics, on=["offer_id", "offer_type"], how="left", validate="many_to_one")
+    df = uplift.copy()
     df["p_convert_treated"] = np.asarray(p_convert_treated, dtype=float)
+    df = _only_eligible(df)
+
+    df = df.merge(economics, on=["offer_id", "offer_type"], how="left", validate="many_to_one")
 
     # Oferta ausente do conjunto de referência não tem economia observável. Deixar o
     # NaN correr faria `allocate` decidir por acidente (NaN perde toda comparação);
@@ -144,7 +167,12 @@ def validate_recommendations(policy: pd.DataFrame) -> list[PolicyRecommendation]
 
 
 def policy_random(reference: pd.DataFrame, cfg: PipelineConfig) -> pd.DataFrame:
-    """Aleatória: uma oferta uniforme entre as que o cliente recebeu. Seed da config."""
+    """Aleatória: uma oferta uniforme entre as que o cliente recebeu. Seed da config.
+
+    Só entre `ELIGIBLE_OFFER_TYPES` — o mesmo universo que `allocate` disputa,
+    para que a comparação de REQ-206 seja justa.
+    """
+    reference = _only_eligible(reference)
     rng = np.random.default_rng(cfg.seed)
     escolhas = (
         reference[["account_id", "offer_id"]]
@@ -182,9 +210,14 @@ def policy_top_completion(reference: pd.DataFrame, p_convert: pd.Series | np.nda
     É o baseline que a política de uplift precisa **bater**: ordenar por μ₁
     (propensão a converter) ignora se a oferta causou a conversão. `p_convert`
     vem do baseline preditivo (`model_baseline`), não do X-learner.
+
+    `p_convert` está alinhado posicionalmente a `reference`, então o filtro de
+    `ELIGIBLE_OFFER_TYPES` acontece **depois** de zipar os dois — nunca antes,
+    ou o alinhamento quebra.
     """
-    df = reference[["account_id", "offer_id"]].copy()
+    df = reference[["account_id", "offer_id", "offer_type"]].copy()
     df["p_convert"] = np.asarray(p_convert, dtype=float)
+    df = _only_eligible(df)
 
     ordenado = df.sort_values(["account_id", "p_convert", "offer_id"], ascending=[True, False, True])
     melhor = ordenado.groupby("account_id", as_index=False).first()

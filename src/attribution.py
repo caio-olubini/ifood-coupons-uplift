@@ -105,9 +105,11 @@ def attribute(events: DataFrame, offers: DataFrame, cfg: PipelineConfig) -> Data
     """Constrói o grão (account_id, offer_id, received_time) com view e transações atribuídas.
 
     Uma linha `offer received` recebe, no máximo, uma `view_time` (a primeira
-    view do cliente para aquela oferta após o recebimento) e a agregação das
-    transações que caem em `[received_time, received_time + duration]`:
-    `assigned_txn_count`, `assigned_txn_amount_sum` e `first_assigned_txn_time`.
+    view do cliente para aquela oferta após o recebimento) e no máximo UMA
+    transação — a primeira elegível em `[received_time, received_time + duration]`
+    — reportada em `assigned_txn_count` (0 ou 1), `assigned_txn_amount_sum` e
+    `first_assigned_txn_time`. Conversão é um evento binário por recebimento;
+    compras adicionais na mesma janela não são somadas nem contadas de novo.
 
     Só entram as transações que atingem o gasto mínimo da oferta (`min_value`):
     uma compra abaixo dele não dispara a recompensa, logo não é conversão.
@@ -182,10 +184,23 @@ def attribute(events: DataFrame, offers: DataFrame, cfg: PipelineConfig) -> Data
         "txn_owner_rank", F.row_number().over(txn_owner_window)
     ).filter(F.col("txn_owner_rank") == 1)
 
-    assigned = owned_txns.groupBy("account_id", "offer_id", "received_time").agg(
-        F.count("txn_id").alias("assigned_txn_count"),
-        F.sum("txn_amount").alias("assigned_txn_amount_sum"),
-        F.min("txn_time").alias("first_assigned_txn_time"),
+    # Uma oferta é atribuída à sua PRIMEIRA transação elegível na janela, não à soma
+    # de todas: a conversão é o evento "o cliente comprou usando a oferta", que
+    # acontece uma vez. Contar/somar todas as compras elegíveis do período inflaria
+    # `assigned_txn_amount_sum` (e portanto `reward_cost` e `conversion_value`) com
+    # compras que a mesma oferta não poderia ter causado mais de uma vez.
+    first_txn_window = Window.partitionBy("account_id", "offer_id", "received_time").orderBy(
+        "txn_time"
+    )
+    assigned = (
+        owned_txns.withColumn("first_txn_rank", F.row_number().over(first_txn_window))
+        .filter(F.col("first_txn_rank") == 1)
+        .groupBy("account_id", "offer_id", "received_time")
+        .agg(
+            F.count("txn_id").alias("assigned_txn_count"),
+            F.sum("txn_amount").alias("assigned_txn_amount_sum"),
+            F.min("txn_time").alias("first_assigned_txn_time"),
+        )
     )
 
     return (

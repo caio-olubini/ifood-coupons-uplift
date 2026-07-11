@@ -52,42 +52,7 @@ def _full_pipeline(spark, cfg, parsed, offers_df):
     return add_reward_cost(featured, offers_df, cfg)
 
 
-# --- G1: grão único -----------------------------------------------------------
-
-def test_g1_unique_grain_no_duplicates(spark, tmp_path):
-    # Dois recebimentos legítimos da mesma oferta (ondas distintas) NÃO colapsam:
-    # geram duas linhas, ambas presentes, sem duplicar a chave.
-    events = [
-        _received("acc1", "off1", 0.0),
-        _received("acc1", "off1", 10.0),
-        _received("acc1", "off2", 3.0),
-        _received("acc2", "off1", 0.0),
-    ]
-    offers = [_offer("off1"), _offer("off2")]
-    profiles = [
-        {"age": 40, "registered_on": "20180101", "gender": "M", "id": "acc1", "credit_card_limit": 1000},
-        {"age": 30, "registered_on": "20180101", "gender": "F", "id": "acc2", "credit_card_limit": 2000},
-    ]
-    cfg, parsed, offers_df, _ = _setup(spark, tmp_path, events, offers, profiles)
-    result = _full_pipeline(spark, cfg, parsed, offers_df)
-
-    total = result.count()
-    distinct = result.select("account_id", "offer_id", "received_time").distinct().count()
-    assert total == 4
-    assert distinct == total  # zero duplicatas na chave do grão
-
-
-def test_g1_same_offer_two_waves_both_survive(spark, tmp_path):
-    events = [_received("acc1", "off1", 0.0), _received("acc1", "off1", 15.0)]
-    cfg, parsed, offers_df, _ = _setup(
-        spark, tmp_path, events, [_offer("off1")],
-        [{"age": 40, "registered_on": "20180101", "gender": "M", "id": "acc1", "credit_card_limit": 1000}],
-    )
-    received_times = sorted(r["received_time"] for r in _full_pipeline(spark, cfg, parsed, offers_df).collect())
-    assert received_times == [0.0, 15.0]
-
-
-# --- G10: conversão atinge o gasto mínimo da oferta ---------------------------
+# --- G1 (grão único) + G10 (conversão atinge o gasto mínimo) ------------------
 
 def _viewed(account_id, offer_id, t):
     return {
@@ -105,12 +70,15 @@ def _transaction(account_id, amount, t):
     }
 
 
-def test_g10_conversion_implies_min_value_reached(spark, tmp_path):
+def test_g1_unique_grain_and_g10_conversion_implies_min_value_reached(spark, tmp_path):
+    # G1: dois recebimentos legítimos da mesma oferta (ondas distintas) NÃO
+    # colapsam — geram duas linhas, sem duplicar a chave do grão.
     # G10 sobre o dataset inteiro: `converted=1` ⇒ `conversion_value >= min_value`.
     # acc1 compra abaixo do mínimo (não converte, não custa); acc2 acima (converte).
     # Antes de G10, acc1 convertia e pagava R$ 10 de desconto por uma compra de R$ 6.
     events = [
         _received("acc1", "off1", 0.0), _viewed("acc1", "off1", 1.0), _transaction("acc1", 6.0, 2.0),
+        _received("acc1", "off1", 10.0),  # mesma oferta, onda diferente — não colapsa
         _received("acc2", "off1", 0.0), _viewed("acc2", "off1", 1.0), _transaction("acc2", 40.0, 2.0),
     ]
     profiles = [
@@ -120,15 +88,21 @@ def test_g10_conversion_implies_min_value_reached(spark, tmp_path):
     cfg, parsed, offers_df, _ = _setup(
         spark, tmp_path, events, [_offer("off1", min_value=20, discount_value=10)], profiles
     )
-    rows = {r["account_id"]: r for r in _full_pipeline(spark, cfg, parsed, offers_df).collect()}
+    result = _full_pipeline(spark, cfg, parsed, offers_df)
 
-    assert rows["acc1"]["converted"] == 0
-    assert rows["acc1"]["reward_cost"] == 0.0
-    assert rows["acc2"]["converted"] == 1   # o invariante não é vácuo
+    total = result.count()
+    distinct = result.select("account_id", "offer_id", "received_time").distinct().count()
+    assert total == 3
+    assert distinct == total  # zero duplicatas na chave do grão (G1)
+
+    rows = {(r["account_id"], r["received_time"]): r for r in result.collect()}
+    assert rows[("acc1", 0.0)]["converted"] == 0
+    assert rows[("acc1", 0.0)]["reward_cost"] == 0.0
+    assert rows[("acc2", 0.0)]["converted"] == 1  # o invariante não é vácuo
 
     for r in rows.values():
         if r["converted"] == 1:
-            assert r["conversion_value"] >= r["min_value"]
+            assert r["conversion_value"] >= r["min_value"]  # G10
 
 
 # --- G7: sentinela de identidade (iff com os três campos ausentes) ------------

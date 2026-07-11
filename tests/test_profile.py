@@ -22,23 +22,9 @@ def test_sentinel_gets_identity_missing_and_null_age(spark, tmp_path):
     assert result["normal"]["age"] == 35
 
 
-def test_missing_gender_becomes_unknown(spark, tmp_path):
+def test_missing_gender_becomes_unknown_and_tenure_is_computed(spark, tmp_path):
     records = [
         {"age": 40, "registered_on": "20180101", "gender": None, "id": "acc1", "credit_card_limit": 1000},
-    ]
-    path = tmp_path / "profile.json"
-    path.write_text(json.dumps(records))
-    cfg = load(raw_dir=tmp_path)
-
-    df = spark.read.option("multiLine", True).json(str(cfg.profile_path))
-    row = normalize_profile(df, cfg).collect()[0]
-
-    assert row["gender"] == "unknown"
-
-
-def test_tenure_days_is_nonnegative_integer(spark, tmp_path):
-    records = [
-        {"age": 40, "registered_on": "20180101", "gender": "M", "id": "acc1", "credit_card_limit": 1000},
     ]
     path = tmp_path / "profile.json"
     path.write_text(json.dumps(records))
@@ -47,4 +33,5 @@ def test_tenure_days_is_nonnegative_integer(spark, tmp_path):
     df = spark.read.option("multiLine", True).json(str(cfg.profile_path))
     row = normalize_profile(df, cfg).collect()[0]
 
+    assert row["gender"] == "unknown"
     assert row["tenure_days"] == 31

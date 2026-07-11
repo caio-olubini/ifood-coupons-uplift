@@ -32,69 +32,9 @@ def _labeled_with_cost(spark, cfg, parsed, offers_df):
     return add_reward_cost(labeled, offers_df, cfg)
 
 
-def test_converted_bogo_has_positive_cost(spark, tmp_path):
-    events = [
-        {"event": "offer received", "account_id": "acc1",
-         "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
-         "time_since_test_start": 0.0},
-        {"event": "offer viewed", "account_id": "acc1",
-         "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
-         "time_since_test_start": 1.0},
-        {"event": "transaction", "account_id": "acc1",
-         "value": {"amount": 30.0, "offer id": None, "offer_id": None, "reward": None},
-         "time_since_test_start": 2.0},
-    ]
-    cfg, parsed, offers_df = _setup(spark, tmp_path, events, [_offer("off1", discount_value=10)])
-    row = _labeled_with_cost(spark, cfg, parsed, offers_df).collect()[0]
-
-    assert row["converted"] == 1
-    assert row["reward_cost"] == 10.0
-
-
-def test_informational_conversion_has_zero_cost(spark, tmp_path):
-    # G6: informational converte (via post-view), mas custo é 0.
-    events = [
-        {"event": "offer received", "account_id": "acc1",
-         "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
-         "time_since_test_start": 0.0},
-        {"event": "offer viewed", "account_id": "acc1",
-         "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
-         "time_since_test_start": 1.0},
-        {"event": "transaction", "account_id": "acc1",
-         "value": {"amount": 30.0, "offer id": None, "offer_id": None, "reward": None},
-         "time_since_test_start": 2.0},
-    ]
-    cfg, parsed, offers_df = _setup(
-        spark, tmp_path, events,
-        [_offer("off1", duration=4.0, offer_type="informational", discount_value=0, min_value=0)],
-    )
-    row = _labeled_with_cost(spark, cfg, parsed, offers_df).collect()[0]
-
-    assert row["converted"] == 1
-    assert row["reward_cost"] == 0.0
-
-
-def test_not_converted_has_zero_cost(spark, tmp_path):
-    events = [
-        {"event": "offer received", "account_id": "acc1",
-         "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
-         "time_since_test_start": 0.0},
-        # compra fora da validade (duration=7): não converte, logo não custa
-        {"event": "transaction", "account_id": "acc1",
-         "value": {"amount": 30.0, "offer id": None, "offer_id": None, "reward": None},
-         "time_since_test_start": 9.0},
-    ]
-    cfg, parsed, offers_df = _setup(spark, tmp_path, events, [_offer("off1", discount_value=10)])
-    row = _labeled_with_cost(spark, cfg, parsed, offers_df).collect()[0]
-
-    assert row["converted"] == 0
-    assert row["reward_cost"] == 0.0
-
-
 def test_unviewed_conversion_still_costs(spark, tmp_path):
     # O desconto é concedido a quem atinge o mínimo na validade, tenha visto a
-    # oferta ou não — no dado real, 25,8% dos `offer completed` não têm view
-    # precedente. O custo segue a conversão, não a exposição.
+    # oferta ou não — o custo segue a conversão, não a exposição.
     events = [
         {"event": "offer received", "account_id": "acc1",
          "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
@@ -112,7 +52,7 @@ def test_unviewed_conversion_still_costs(spark, tmp_path):
 
 
 def test_g6_invariant_holds_across_rows(spark, tmp_path):
-    # G6 global: qualquer linha com reward_cost > 0 é convertida e não-informational.
+    # G6: reward_cost > 0 ⇒ converted=1 e offer_type != informational.
     events = [
         {"event": "offer received", "account_id": "acc1",
          "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
@@ -126,12 +66,23 @@ def test_g6_invariant_holds_across_rows(spark, tmp_path):
         {"event": "offer received", "account_id": "acc2",
          "value": {"amount": None, "offer id": "off2", "offer_id": None, "reward": None},
          "time_since_test_start": 0.0},
+        {"event": "offer viewed", "account_id": "acc2",
+         "value": {"amount": None, "offer id": "off2", "offer_id": None, "reward": None},
+         "time_since_test_start": 1.0},
+        {"event": "transaction", "account_id": "acc2",
+         "value": {"amount": 30.0, "offer id": None, "offer_id": None, "reward": None},
+         "time_since_test_start": 2.0},
     ]
-    offers = [_offer("off1", discount_value=10), _offer("off2", offer_type="informational", discount_value=0)]
+    offers = [
+        _offer("off1", discount_value=10),
+        _offer("off2", duration=4.0, offer_type="informational", discount_value=0, min_value=0),
+    ]
     cfg, parsed, offers_df = _setup(spark, tmp_path, events, offers)
-    rows = _labeled_with_cost(spark, cfg, parsed, offers_df).collect()
+    rows = {r["account_id"]: r for r in _labeled_with_cost(spark, cfg, parsed, offers_df).collect()}
 
-    for r in rows:
+    assert rows["acc1"]["reward_cost"] == 10.0  # bogo convertido paga
+    assert rows["acc2"]["reward_cost"] == 0.0   # informational convertido não paga (G6)
+    for r in rows.values():
         if r["reward_cost"] > 0:
             assert r["converted"] == 1
             assert r["offer_type"] != "informational"

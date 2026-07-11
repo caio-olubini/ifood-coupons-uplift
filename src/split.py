@@ -14,6 +14,20 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
 from src.config import PipelineConfig
+from src.policy import ELIGIBLE_OFFER_TYPES
+
+
+def exclude_informational(df: DataFrame) -> DataFrame:
+    """Remove `offer_type == informational` antes de qualquer ajuste de modelo.
+
+    `informational` não paga desconto (`cost.add_reward_cost`) e está fora do
+    escopo da política (`policy.ELIGIBLE_OFFER_TYPES`); deixá-lo influenciar o
+    baseline preditivo ou o X-learner misturaria um mecanismo de recompensa que
+    a política nunca vai usar. Chamar logo após `temporal_split`, antes de
+    `toPandas()`, garante que nenhum modelo — baseline, X-learner, avaliação ou
+    curva de ganho — jamais o veja.
+    """
+    return df.filter(F.col("offer_type").isin(list(ELIGIBLE_OFFER_TYPES)))
 
 
 def temporal_split(df: DataFrame, cfg: PipelineConfig) -> tuple[DataFrame, DataFrame]:

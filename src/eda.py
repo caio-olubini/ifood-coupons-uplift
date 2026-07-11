@@ -505,6 +505,29 @@ def fig_covariate_balance(frame: pd.DataFrame, cfg: PipelineConfig, theme: str =
     return fig
 
 
+def treatment_group_comparison(processed: DataFrame) -> pd.DataFrame:
+    """Taxa de conversão e ticket médio entre viu (`treatment=1`) e não viu (`treatment=0`).
+
+    Leitura bruta, não causal: `treatment` é pós-tratamento (o cliente escolheu ver),
+    então a diferença aqui mistura efeito real com o mesmo confundimento que
+    `covariate_balance` qualifica. Complementa o balanço de covariáveis com a métrica
+    de resposta que ele não mostra — o "quanto" ao lado do "os grupos são comparáveis".
+    """
+    frame = (
+        processed.groupBy("treatment")
+        .agg(
+            F.count("*").alias("recebidos"),
+            F.avg("converted").alias("taxa_conversao"),
+            F.avg(F.when(F.col("converted") == 1, F.col("conversion_value"))).alias("ticket_medio"),
+            F.avg("conversion_value").alias("receita_media"),
+        )
+        .orderBy("treatment")
+        .toPandas()
+    )
+    frame["treatment"] = frame["treatment"].map({0: "não viu", 1: "viu"})
+    return frame
+
+
 # --- Perfil univariado das features (REQ-108) ----------------------------------
 
 def numeric_profile(df: DataFrame, columns: list[str], cfg: PipelineConfig) -> pd.DataFrame:

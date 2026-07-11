@@ -84,9 +84,36 @@ class PipelineConfig(BaseSettings):
     xlearner_max_depth: int = Field(default=-1)
     xlearner_learning_rate: float = Field(default=0.05, gt=0)
 
-    # Avaliação offline (REQ-206, REQ-207).
-    ipw_min_propensity: float = Field(default=1e-3, gt=0, lt=1)
-    ipw_confidence_level: float = Field(default=0.95, gt=0, lt=1)
+    # Avaliação offline: curva de ganho incremental por budget top-N (REQ-206).
+    # Cada estratégia (uplift, conversão crua, aleatório) é um ranking; a curva
+    # mede o lucro líquido incremental causal dos top-N. Estes budgets são os
+    # pontos tabelados na leitura "se meu budget for N, quanto ganho?" — a curva
+    # inteira é varrida, não só eles.
+    gain_curve_budgets: list[int] = Field(default=[1000, 5000, 10000])
+
+    # Intervalo de confiança da curva de ganho (lucro e conversão incremental),
+    # por bootstrap não paramétrico (reamostragem do holdout com reposição,
+    # recomputando a curva por réplica — mesmo padrão do placebo em
+    # `placebo_n_permutations`, mas para incerteza amostral, não a nula causal).
+    gain_curve_n_bootstrap: int = Field(default=200, gt=0)
+    gain_curve_confidence_level: float = Field(default=0.95, gt=0, lt=1)
+
+    # Estratégia híbrida (gaincurve.hybrid_score): score = uplift_x_learner +
+    # λ · p_convert_cru, soma direta sem normalizar (os dois já vivem em escalas
+    # parecidas: τ ∈ [-1, 1] aprox., p_convert ∈ [0, 1]). λ=0 degenera no modelo
+    # de uplift puro — é o ponto de controle do grid, não um caso especial.
+    hybrid_lambda_grid: list[float] = Field(default=[0.0, 0.1, 0.3, 0.5])
+
+    # Estratégia híbrida dinâmica (gaincurve.dynamic_hybrid_score): peso λ_local
+    # por cliente, proporcional à incerteza |mu1 − mu0| do X-learner elevada a
+    # γ. γ=1 é resposta linear; γ>1 concentra o blend nos extremos de incerteza
+    # (conservador); γ<1 espalha o blend por mais do ranking (agressivo).
+    dynamic_hybrid_gamma_grid: list[float] = Field(default=[0.5, 1.0, 2.0])
+
+    # Classificação de quadrante de uplift (persuadable/sure thing/lost cause/
+    # sleeping dog): limiar sobre μ₀/μ₁ previstos (probabilidades) para decidir
+    # "alto" vs "baixo". 0,5 é o ponto natural para um outcome binário.
+    quadrant_probability_threshold: float = Field(default=0.5, gt=0, lt=1)
 
     # Teste de placebo por permutação (REQ-212): réplicas do embaralhamento e o
     # percentil da nula que o Qini real precisa superar. `placebo_confidence_level`
@@ -95,9 +122,14 @@ class PipelineConfig(BaseSettings):
     placebo_n_permutations: int = Field(default=20, gt=0)
     placebo_confidence_level: float = Field(default=0.95, gt=0, lt=1)
 
-    # Dimensionamento do próximo A/B (REQ-211): potência e nível de teste.
-    ab_test_power: float = Field(default=0.8, gt=0, lt=1)
-    ab_test_alpha: float = Field(default=0.05, gt=0, lt=1)
+    # Calibração da magnitude do uplift (REQ-213): nº de bins de τ previsto em que
+    # o uplift previsto médio é comparado ao observado (tratado − controle no bin).
+    calibration_n_bins: int = Field(default=10, gt=1)
+
+    # Calibração isotônica pós-hoc (REQ-214): cross-fitting dentro do holdout —
+    # cada fold prevê com a isotônica ajustada nos outros folds, nunca na sua
+    # própria fatia, para o "depois" não ficar otimista por ver o próprio dado.
+    calibration_n_folds: int = Field(default=5, gt=1)
 
     # Tracking de experimentos (REQ-209): SQLite local, sem servidor — MLflow
     # 3.x descontinuou o backend de arquivo puro (./mlruns) em favor de banco.

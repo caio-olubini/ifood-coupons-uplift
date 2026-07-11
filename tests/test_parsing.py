@@ -33,7 +33,7 @@ def test_received_and_viewed_read_offer_id_with_space(spark, tmp_path):
         assert row["offer_ref"] == "off1"
 
 
-def test_completed_reads_offer_id_with_underscore(spark, tmp_path):
+def test_completed_reads_underscore_and_transaction_has_no_offer_ref(spark, tmp_path):
     records = [
         {
             "event": "offer completed",
@@ -41,17 +41,6 @@ def test_completed_reads_offer_id_with_underscore(spark, tmp_path):
             "value": {"amount": None, "offer id": None, "offer_id": "off1", "reward": 2.0},
             "time_since_test_start": 2.0,
         },
-    ]
-    _write_transactions(tmp_path, records)
-    cfg = load(raw_dir=tmp_path)
-    row = parse_events(spark, cfg).collect()[0]
-
-    assert row["offer_ref"] == "off1"
-    assert row["reward"] == 2.0
-
-
-def test_transaction_has_amount_and_no_offer_ref(spark, tmp_path):
-    records = [
         {
             "event": "transaction",
             "account_id": "acc1",
@@ -61,7 +50,9 @@ def test_transaction_has_amount_and_no_offer_ref(spark, tmp_path):
     ]
     _write_transactions(tmp_path, records)
     cfg = load(raw_dir=tmp_path)
-    row = parse_events(spark, cfg).collect()[0]
+    rows = {r["event"]: r for r in parse_events(spark, cfg).collect()}
 
-    assert row["amount"] == 5.5
-    assert row["offer_ref"] is None
+    assert rows["offer completed"]["offer_ref"] == "off1"
+    assert rows["offer completed"]["reward"] == 2.0
+    assert rows["transaction"]["amount"] == 5.5
+    assert rows["transaction"]["offer_ref"] is None

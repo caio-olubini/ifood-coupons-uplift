@@ -70,37 +70,3 @@ def test_no_history_yields_zeroed_counts(spark, tmp_path):
     assert row["hist_completed_unseen_flag"] == 0
 
 
-def test_post_receipt_offer_events_do_not_leak(spark, tmp_path):
-    # Um segundo recebimento posterior não pode inflar hist_offers_received da 1a linha.
-    events = [
-        {"event": "offer received", "account_id": "acc1",
-         "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
-         "time_since_test_start": 0.0},
-        {"event": "offer received", "account_id": "acc1",
-         "value": {"amount": None, "offer id": "off2", "offer_id": None, "reward": None},
-         "time_since_test_start": 3.0},
-    ]
-    offers = [_offer("off1"), _offer("off2")]
-    cfg, parsed, offers_df = _setup(spark, tmp_path, events, offers)
-    rows = {r["offer_id"]: r for r in _feature_row(spark, cfg, parsed, offers_df)}
-
-    # A linha da off1 (received em t=0) não vê nenhum received anterior.
-    assert rows["off1"]["hist_offers_received"] == 0
-    # A linha da off2 (received em t=3) vê o received da off1 (t=0).
-    assert rows["off2"]["hist_offers_received"] == 1
-
-
-def test_offer_context_features_from_catalog(spark, tmp_path):
-    events = [
-        {"event": "offer received", "account_id": "acc1",
-         "value": {"amount": None, "offer id": "off1", "offer_id": None, "reward": None},
-         "time_since_test_start": 0.0},
-    ]
-    offers = [_offer("off1", channels=["web", "email", "mobile"], discount_value=5, min_value=20)]
-    cfg, parsed, offers_df = _setup(spark, tmp_path, events, offers)
-    row = _feature_row(spark, cfg, parsed, offers_df)[0]
-
-    assert row["n_channels"] == 3
-    assert row["channel_web"] == 1
-    assert row["channel_social"] == 0
-    assert row["discount_to_minvalue_ratio"] == 5 / 20

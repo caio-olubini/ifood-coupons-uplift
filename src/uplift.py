@@ -52,7 +52,7 @@ def _design_matrix(df: pd.DataFrame) -> pd.DataFrame:
     return X
 
 
-def _fixed_propensity(treatment: np.ndarray) -> np.ndarray:
+def fixed_propensity(treatment: np.ndarray) -> np.ndarray:
     """Propensity constante = taxa de view observada no grupo (Premissa 4: RCT,
     propensity conhecida, não estimada). Mesmo valor repetido por linha —
     CausalML espera um vetor do tamanho de `treatment`, não um escalar.
@@ -83,7 +83,7 @@ def fit_xlearner(df: pd.DataFrame, cfg: PipelineConfig) -> dict[str, BaseXRegres
         X = _design_matrix(group)
         treatment = group[TREATMENT_COLUMN].to_numpy()
         y = group[OUTCOME_COLUMN].to_numpy()
-        p = _fixed_propensity(treatment)
+        p = fixed_propensity(treatment)
 
         model = BaseXRegressor(learner=_make_learner(cfg), control_name=0)
         model.fit(X=X, treatment=treatment, y=y, p=p)
@@ -106,7 +106,7 @@ def predict(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.DataFrame
     uplift = pd.Series(index=df.index, dtype=float)
     for offer_type, group in df.groupby(OFFER_TYPE_COLUMN):
         model = models[offer_type]
-        p = _fixed_propensity(group[TREATMENT_COLUMN].to_numpy())
+        p = fixed_propensity(group[TREATMENT_COLUMN].to_numpy())
         te = model.predict(X=_design_matrix(group), p=p)
         uplift.loc[group.index] = te[:, 0] if te.ndim == 2 else te.ravel()
 
@@ -119,6 +119,33 @@ def predict(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.DataFrame
 # resultado: μ₀ (treinado só no controle) e μ₁ (só no tratado). Um uplift alto
 # demais quase sempre é μ₀ degenerado, não efeito causal grande — e μ₀ degenera
 # quando o label é impossível no controle. Estas funções abrem a caixa.
+
+
+def predict_stages(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.DataFrame:
+    """μ₀, μ₁ e τ previstos **por linha** (não agregados), no grão do contrato.
+
+    Mesmo cálculo de `stage_diagnostics`, mas devolvendo a estimativa individual
+    em vez da média por `offer_type` — é o que a classificação de quadrante
+    (`quadrant.classify_quadrant`) precisa: μ₀/μ₁ por cliente, não a média do
+    grupo. `predict` já devolve τ por linha; esta função adiciona μ₀/μ₁ ao lado,
+    reaproveitando o mesmo laço em vez de rodar o X-learner duas vezes.
+    """
+    mu0 = pd.Series(index=df.index, dtype=float)
+    mu1 = pd.Series(index=df.index, dtype=float)
+    tau = pd.Series(index=df.index, dtype=float)
+
+    for offer_type, group in df.groupby(OFFER_TYPE_COLUMN):
+        model = models[offer_type]
+        X = _design_matrix(group)
+        arm = model.t_groups[0]
+        p = fixed_propensity(group[TREATMENT_COLUMN].to_numpy())
+
+        mu0.loc[group.index] = model.model_mu_c.predict(X)
+        mu1.loc[group.index] = model.models_mu_t[arm].predict(X)
+        te = model.predict(X=X, p=p)
+        tau.loc[group.index] = te[:, 0] if te.ndim == 2 else te.ravel()
+
+    return df[[*GRAIN_COLUMNS, OFFER_TYPE_COLUMN]].assign(mu0=mu0, mu1=mu1, tau=tau)
 
 
 def label_by_arm(df: pd.DataFrame) -> pd.DataFrame:
@@ -157,7 +184,7 @@ def stage_diagnostics(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd
 
         mu0 = model.model_mu_c.predict(X)
         mu1 = model.models_mu_t[arm].predict(X)
-        tau = model.predict(X=X, p=_fixed_propensity(group[TREATMENT_COLUMN].to_numpy()))
+        tau = model.predict(X=X, p=fixed_propensity(group[TREATMENT_COLUMN].to_numpy()))
         tau = tau[:, 0] if tau.ndim == 2 else tau.ravel()
 
         linhas.append({

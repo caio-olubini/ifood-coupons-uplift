@@ -10,11 +10,7 @@ def test_default_config_loads():
     assert cfg.age_sentinel == 118
 
 
-def test_negative_smd_threshold_fails_at_load():
+@pytest.mark.parametrize("overrides", [{"smd_threshold": -0.1}, {"n_campaign_waves": 0}])
+def test_out_of_range_value_fails_at_load(overrides):
     with pytest.raises(ValidationError):
-        load(smd_threshold=-0.1)
-
-
-def test_zero_campaign_waves_fails_at_load():
-    with pytest.raises(ValidationError):
-        load(n_campaign_waves=0)
+        load(**overrides)
