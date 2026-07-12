@@ -68,15 +68,23 @@ Abra [http://localhost:8080](http://localhost:8080) no navegador.
 
 **URL:** https://caio-olubini.github.io/ifood-coupons-uplift/
 
-O deploy é automático via GitHub Actions (`.github/workflows/deploy-simulator-pages.yml`)
-sempre que `main` recebe alterações em `simulator/`. O workflow publica o conteúdo de
-`simulator/` como raiz do site — paths relativos (`./data/*.json`, `./assets/plotly.min.js`).
+O deploy é automático via GitHub Actions (`.github/workflows/deploy-simulator-pages.yml`):
+a cada push em `main` que toca `simulator/`, o workflow publica o conteúdo de `simulator/`
+na branch `gh-pages` (raiz do site).
 
-### Pré-requisitos no repositório
+### Ativar o site (uma vez)
 
-1. **Settings → Pages → Build and deployment → Source:** GitHub Actions.
-2. Commite `simulator/data/` após cada `simulator.export` (artefatos estáticos).
-3. Nenhum arquivo em `simulator/data/` deve ultrapassar 50 MB.
+1. Abra **Settings → Pages** no repositório.
+2. **Build and deployment → Source:** `Deploy from a branch`.
+3. **Branch:** `gh-pages` · pasta **`/ (root)`** · Save.
+4. Se o workflow ainda não rodou, vá em **Actions → Deploy simulador → Run workflow**.
+
+Aguarde ~1 minuto. O site deve abrir em https://caio-olubini.github.io/ifood-coupons-uplift/
+
+### Manutenção
+
+- Commite `simulator/data/` após cada `simulator.export` (artefatos estáticos).
+- Nenhum arquivo em `simulator/data/` deve ultrapassar 50 MB.
 
 ### Teste local
 

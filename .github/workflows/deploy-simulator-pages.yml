@@ -1,6 +1,6 @@
 # Publica o simulador estático em GitHub Pages (spec 03, REQ-311, T-312).
-# O artefato deployado é a pasta simulator/ — paths relativos (./data/*.json)
-# funcionam com a URL https://<user>.github.io/<repo>/.
+# Empurra o conteúdo de simulator/ para a branch gh-pages (site na raiz).
+# Pré-requisito único no GitHub: Settings → Pages → Deploy from branch → gh-pages → /
 
 name: Deploy simulador (GitHub Pages)
 
@@ -13,9 +13,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: write
 
 concurrency:
   group: pages
@@ -23,19 +21,16 @@ concurrency:
 
 jobs:
   deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
+      - name: Publicar em gh-pages
+        uses: peaceiris/actions-gh-pages@v4
         with:
-          path: simulator
-
-      - name: Deploy to GitHub Pages
-        id: deployment
-        uses: actions/deploy-pages@v4
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./simulator
+          publish_branch: gh-pages
+          force_orphan: true
+          commit_message: "Deploy simulador @ ${{ github.sha }}"
