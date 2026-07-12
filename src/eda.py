@@ -1,26 +1,39 @@
 """Visões da EDA (REQ-108) e diagnóstico de balanço de covariáveis (REQ-109).
 
-Cada visão é um par: uma função **pura** que agrega no Spark e devolve um pandas
-pequeno, e um construtor de figura que lê esse pandas. O notebook importa e
-exibe; nenhuma transformação vive lá (NFR "notebooks apenas para análise").
+Cada visão é uma função **pura** que agrega no Spark e devolve um pandas
+pequeno. O notebook importa esse pandas e o desenha com as primitivas genéricas
+de `src/viz.py` (`line_series`, `vertical_bars`, `heatmap`, `faceted`, …) — a
+figura é a *chamada* da primitiva, não um construtor por gráfico aqui (figura
+`fig_*` por visão é o anti-padrão que essas primitivas substituem). Nenhuma
+transformação vive no notebook (NFR "notebooks apenas para análise").
 
-Toda figura nasce de `viz.figure` e leva rótulo direto — a paleta validada não
-permite que a cor carregue identidade sozinha (ver `src/viz.py`).
+O estilo das figuras (paleta validada, rótulo direto) vem do mesmo `src/viz.py`;
+nada de estilo ad hoc.
 """
 
 from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 
-from src import viz
 from src.config import PipelineConfig
 
 # Covariáveis de cliente do contrato. `gender` entra como indicadores (é categórica).
 CLIENT_COVARIATES = ("age", "credit_card_limit", "tenure_days", "identity_missing")
+
+HIST_COMPRA_FEATURES = (
+    "hist_spend_total", "hist_txn_count", "hist_avg_ticket", "hist_spend_std",
+    "hist_recency_days", "hist_frequency", "hist_spend_trend",
+)
+HIST_OFERTA_FEATURES = (
+    "hist_offers_received", "hist_offers_viewed", "hist_offers_completed",
+    "hist_offers_received_bogo", "hist_offers_received_discount",
+    "hist_view_rate", "hist_conv_rate_bogo", "hist_conv_rate_discount",
+    "hist_completed_unseen_flag", "hist_time_view_to_conv",
+)
+HIST_BALANCE_FEATURES = HIST_COMPRA_FEATURES + HIST_OFERTA_FEATURES
 
 EVENT_ORDER = ("offer received", "offer viewed", "offer completed", "transaction")
 
@@ -36,38 +49,6 @@ def events_over_time(events: DataFrame) -> pd.DataFrame:
         .toPandas()
     )
     return por_dia.sort_values(["event", "dia"]).reset_index(drop=True)
-
-
-def fig_events_over_time(frame: pd.DataFrame, cfg: PipelineConfig, theme: str = "light") -> go.Figure:
-    """Os três eventos de campanha são picos em `cfg.n_campaign_waves` dias — nunca
-    contínuos —, por isso usam marcadores (linha interpolada mentiria atividade
-    diária). `transaction` é o único evento genuinamente contínuo e leva linha.
-    """
-    ondas = sorted(frame.loc[frame["event"] == "offer received", "dia"].unique())
-    n_ondas = len(ondas)
-    fig = viz.figure(
-        f"Três eventos são disparos em {n_ondas} dias exatos; só a compra é contínua — a validação terá de respeitar essas ondas",
-        f"Ondas em t={', '.join(str(int(d)) for d in ondas)}. Eventos por dia, escala log (picos e fundo em ordens de grandeza distintas).",
-        theme=theme,
-    )
-    paleta = viz.palette(theme)
-    for cor, evento in zip(paleta, EVENT_ORDER):
-        serie = frame[frame["event"] == evento]
-        discreto = evento != "transaction"
-        fig.add_trace(go.Scatter(
-            x=serie["dia"], y=serie["eventos"], name=evento,
-            mode="markers" if discreto else "lines",
-            marker=dict(color=cor, size=9) if discreto else None,
-            line=dict(color=cor, width=2) if not discreto else None,
-            hovertemplate=f"{evento}<br>dia %{{x}}<br>%{{y:,}} eventos<extra></extra>",
-        ))
-    for dia in ondas:
-        fig.add_vline(x=dia, line=dict(color=viz.ink(theme)[2], width=1, dash="dot"))
-    fig.update_layout(
-        xaxis_title="dia desde o início do teste", yaxis_title="eventos (escala log)",
-        yaxis_type="log", hovermode="x unified",
-    )
-    return viz.add_end_labels(fig, theme)
 
 
 # --- Visão 2: as seis ondas de campanha ----------------------------------------
@@ -87,21 +68,33 @@ def campaign_waves(processed: DataFrame) -> pd.DataFrame:
     )
 
 
-def fig_campaign_waves(frame: pd.DataFrame, theme: str = "light") -> go.Figure:
-    n = len(frame)
-    fig = viz.figure(
-        f"As {n} ondas são equilibradas — nenhuma domina a amostra",
-        "Recebimentos por onda; a onda é o rank do disparo (t=0, 7, 14, 17, 21, 24), não um bucket fixo.",
-        theme=theme,
+def campaign_validity_windows(processed: DataFrame, events: DataFrame) -> tuple[pd.DataFrame, float]:
+    """Janela de validade por onda e quanto dela é observável antes do fim dos dados.
+
+    `valid_until = received_time + duration`. Quando ultrapassa o último evento bruto,
+    a diferença é censura à direita — conversão e taxas das ondas tardias ficam
+    subestimadas por construção, não por fadiga do cliente.
+    """
+    fim = float(events.agg(F.max("time").alias("fim")).first()["fim"])
+    ondas = (
+        processed.groupBy("campaign_wave", "received_time")
+        .agg(
+            F.avg("duration").alias("duration"),
+            F.count("*").alias("recebimentos"),
+        )
+        .orderBy("campaign_wave")
+        .toPandas()
     )
-    fig.add_trace(go.Bar(
-        x=[f"onda {int(w)}<br><span style='font-size:11px'>t={t:g}</span>"
-           for w, t in zip(frame["campaign_wave"], frame["received_time"])],
-        y=frame["recebimentos"], marker_color=viz.palette(theme)[0],
-        hovertemplate="%{x}<br>%{y:,} recebimentos<extra></extra>",
-    ))
-    fig.update_layout(yaxis_title="recebimentos", showlegend=False)
-    return viz.add_bar_labels(fig, "%{y:,.0f}", theme)
+    ondas["valid_until"] = ondas["received_time"] + ondas["duration"]
+    ondas["janela_observavel"] = ondas["valid_until"].clip(upper=fim)
+    ondas["censurada"] = ondas["valid_until"] > fim
+    ondas["dias_censurados"] = (ondas["valid_until"] - fim).clip(lower=0)
+    ondas["rotulo"] = ondas.apply(
+        lambda r: f"onda {int(r.campaign_wave)} · t={r.received_time:g} · {r.duration:g}d",
+        axis=1,
+    )
+    ondas["recebimentos_censurados"] = np.where(ondas["censurada"], ondas["recebimentos"], 0)
+    return ondas, fim
 
 
 # --- Visão 3: completou sem ver, por tipo de oferta -----------------------------
@@ -138,28 +131,6 @@ def completed_unseen_by_type(events: DataFrame, offers: DataFrame) -> pd.DataFra
     return frame
 
 
-def fig_completed_unseen(frame: pd.DataFrame, theme: str = "light") -> go.Figure:
-    com_evento = frame[frame["completados"] > 0]
-    geral = com_evento["sem_view"].sum() / com_evento["completados"].sum()
-    sem_evento = frame.loc[frame["completados"] == 0, "offer_type"].tolist()
-
-    fig = viz.figure(
-        f"{geral:.1%} das ofertas completadas nunca foram vistas — são compras que aconteceriam de todo modo",
-        "Por isso o label é influence-aware: completar sem ver não é conversão causada. "
-        + (f"`{', '.join(sem_evento)}` não emite `offer completed`." if sem_evento else ""),
-        theme=theme,
-    )
-    rotulo = [t if c > 0 else f"{t}<br><span style='font-size:11px'>sem evento completed</span>"
-              for t, c in zip(frame["offer_type"], frame["completados"])]
-    fig.add_trace(go.Bar(
-        x=rotulo, y=frame["taxa_sem_view"].fillna(0.0), marker_color=viz.palette(theme)[0],
-        customdata=np.stack([frame["sem_view"], frame["completados"]], axis=-1),
-        hovertemplate="%{x}<br>%{customdata[0]:,} de %{customdata[1]:,} sem view<extra></extra>",
-    ))
-    fig.update_layout(yaxis_title="completou sem ver", yaxis_tickformat=".0%", showlegend=False)
-    return viz.add_bar_labels(fig, "%{y:.1%}", theme)
-
-
 # --- Visão 4: sobreposição dos nulos de perfil ---------------------------------
 
 def identity_null_overlap(raw_profile: DataFrame, cfg: PipelineConfig) -> pd.DataFrame:
@@ -181,22 +152,6 @@ def identity_null_overlap(raw_profile: DataFrame, cfg: PipelineConfig) -> pd.Dat
     return pd.DataFrame(
         [{"conjunto": k, "clientes": v, "fracao": v / total} for k, v in linha.items()]
     ).assign(total_clientes=total)
-
-
-def fig_null_overlap(frame: pd.DataFrame, theme: str = "light") -> go.Figure:
-    intersecao = int(frame.loc[frame["conjunto"] == "os três, juntos", "clientes"].iloc[0])
-    fracao = frame.loc[frame["conjunto"] == "os três, juntos", "fracao"].iloc[0]
-    fig = viz.figure(
-        f"Os três campos faltam nos mesmos {intersecao:,} clientes ({fracao:.1%}) — é um segmento, não ruído",
-        "Sobreposição perfeita: `age=118` é sentinela de identidade ausente, nunca idade real (Premissa 3).",
-        theme=theme,
-    )
-    fig.add_trace(go.Bar(
-        x=frame["conjunto"], y=frame["clientes"], marker_color=viz.palette(theme)[0],
-        hovertemplate="%{x}<br>%{y:,} clientes<extra></extra>",
-    ))
-    fig.update_layout(yaxis_title="clientes", showlegend=False)
-    return viz.add_bar_labels(fig, "%{y:,.0f}", theme)
 
 
 # --- Ato 3: compra fora de qualquer janela de oferta ---------------------------
@@ -292,30 +247,6 @@ def conversion_by_type_and_segment(processed: DataFrame, profile: DataFrame, cfg
     return frame
 
 
-def fig_conversion_heterogeneity(frame: pd.DataFrame, theme: str = "light") -> go.Figure:
-    ordem_q = ["Q1 (mais novo)", "Q2", "Q3", "Q4 (mais antigo)"]
-    maior = frame.loc[frame["taxa_conversao"].idxmax()]
-    menor = frame.loc[frame["taxa_conversao"].idxmin()]
-    # `informational` pode zerar num quartil; a razão viraria inf e o título mentiria.
-    razao = (f"{maior['taxa_conversao'] / menor['taxa_conversao']:.1f}×"
-             if menor["taxa_conversao"] > 0 else "muitas vezes")
-    fig = viz.figure(
-        f"Conversão varia {razao} entre tipo × quartil de tenure — "
-        "há sinal heterogêneo para o uplift aprender",
-        "Taxa de conversão influence-aware sobre os recebimentos (denominador: ofertas recebidas).",
-        theme=theme,
-    )
-    for cor, tipo in zip(viz.palette(theme), sorted(frame["offer_type"].unique())):
-        serie = frame[frame["offer_type"] == tipo].set_index("tenure_q").reindex(ordem_q).reset_index()
-        fig.add_trace(go.Scatter(
-            x=serie["tenure_q"], y=serie["taxa_conversao"], name=tipo, mode="lines+markers",
-            line=dict(color=cor, width=2), marker=dict(size=8, color=cor),
-            hovertemplate=f"{tipo}<br>%{{x}}<br>%{{y:.1%}} conversão<extra></extra>",
-        ))
-    fig.update_layout(xaxis_title="quartil de tenure", yaxis_title="taxa de conversão", yaxis_tickformat=".0%")
-    return viz.add_end_labels(fig, theme)
-
-
 # --- Visão 5: distribuições de features-chave ----------------------------------
 
 def numeric_histogram(df: DataFrame, column: str, bins: int) -> pd.DataFrame:
@@ -338,34 +269,6 @@ def numeric_histogram(df: DataFrame, column: str, bins: int) -> pd.DataFrame:
     )
     contagens["centro"] = lo + (contagens["bucket"] + 0.5) * largura
     return contagens[["centro", "contagem"]]
-
-
-def fig_feature_distributions(histogramas: dict[str, pd.DataFrame], theme: str = "light") -> go.Figure:
-    """Small multiples: uma escala por painel, jamais dois eixos y numa figura."""
-    from plotly.subplots import make_subplots
-
-    nomes = list(histogramas)
-    colunas = 2
-    linhas = (len(nomes) + colunas - 1) // colunas
-    fig = make_subplots(rows=linhas, cols=colunas, subplot_titles=nomes,
-                        horizontal_spacing=0.12, vertical_spacing=0.18)
-    cor = viz.palette(theme)[0]
-    for i, nome in enumerate(nomes):
-        h = histogramas[nome]
-        fig.add_trace(
-            go.Bar(x=h["centro"], y=h["contagem"], marker_color=cor, name=nome,
-                   hovertemplate=f"{nome} ≈ %{{x:.4g}}<br>%{{y:,}} linhas<extra></extra>"),
-            row=i // colunas + 1, col=i % colunas + 1,
-        )
-    base = viz.figure(
-        "Features-chave: caudas longas em gasto, e o vazio de idade que é o segmento sentinela",
-        "Small multiples — cada painel tem sua própria escala; nenhum eixo y duplo.",
-        theme=theme,
-    )
-    fig.update_layout(template=base.layout.template, title=base.layout.title,
-                      showlegend=False, height=260 * linhas, margin=dict(l=64, r=32, t=120, b=48))
-    fig.update_annotations(font=dict(size=12, color=viz.ink(theme)[1]))
-    return fig
 
 
 # --- REQ-109: balanço de covariáveis (SMD) -------------------------------------
@@ -398,7 +301,7 @@ def covariate_balance(processed: DataFrame, cfg: PipelineConfig, group_col: str 
     estimador não muda (Premissas 4 e 5).
     """
     preparado, colunas_genero = _with_gender_indicators(processed)
-    covariaveis = list(CLIENT_COVARIATES) + colunas_genero
+    covariaveis = list(CLIENT_COVARIATES) + list(HIST_BALANCE_FEATURES) + colunas_genero
 
     agregacoes = []
     for c in covariaveis:
@@ -461,48 +364,6 @@ def assignment_balance(processed: DataFrame, cfg: PipelineConfig) -> pd.DataFram
         linhas.append({"covariavel": c, "pior_abs_smd": pior, "acima_do_limiar": pior > cfg.smd_threshold})
 
     return pd.DataFrame(linhas).sort_values("pior_abs_smd", ascending=False).reset_index(drop=True)
-
-
-def fig_covariate_balance(frame: pd.DataFrame, cfg: PipelineConfig, theme: str = "light") -> go.Figure:
-    desbalanceadas = frame[frame["acima_do_limiar"]]["covariavel"].tolist()
-    limiar = cfg.smd_threshold
-    conclusao = (
-        f"Ver a oferta não é aleatório: {len(desbalanceadas)} covariável(is) acima de |SMD| {limiar}"
-        if desbalanceadas else
-        f"Tratado e controle são comparáveis: nenhuma covariável acima de |SMD| {limiar}"
-    )
-    # SMD infinito (variância nula, médias distintas) não é plotável — mas some se
-    # for descartado calado. Vai nomeado no subtítulo.
-    separa_perfeitamente = frame.loc[~np.isfinite(frame["smd"]), "covariavel"].tolist()
-    subtitulo = ("SMD entre quem viu e quem não viu a oferta. "
-                 "Diagnóstico que qualifica a leitura causal — não muda o estimador.")
-    if separa_perfeitamente:
-        subtitulo += f" |SMD|=∞ (separa os grupos por completo): {', '.join(separa_perfeitamente)}."
-
-    fig = viz.figure(conclusao, subtitulo, theme=theme)
-    ordenado = frame[np.isfinite(frame["smd"])].sort_values("smd")
-    # A cor de estado nunca carrega o significado sozinha: vem com marcador e rótulo.
-    cores = [viz.STATUS["critical"] if a else viz.palette(theme)[0] for a in ordenado["acima_do_limiar"]]
-    simbolos = ["diamond" if a else "circle" for a in ordenado["acima_do_limiar"]]
-
-    fig.add_trace(go.Scatter(
-        x=ordenado["smd"], y=ordenado["covariavel"], mode="markers",
-        marker=dict(color=cores, size=12, symbol=simbolos,
-                    line=dict(color=viz.SURFACE_LIGHT if theme == "light" else viz.SURFACE_DARK, width=2)),
-        hovertemplate="%{y}<br>SMD %{x:+.3f}<extra></extra>", showlegend=False,
-    ))
-    for limite in (-limiar, limiar):
-        fig.add_vline(x=limite, line=dict(color=viz.ink(theme)[2], width=1, dash="dot"))
-    fig.add_vline(x=0, line=dict(color=viz.ink(theme)[1], width=1))
-
-    secundaria = viz.ink(theme)[1]
-    for _, linha in ordenado.iterrows():
-        if linha["acima_do_limiar"]:
-            fig.add_annotation(x=linha["smd"], y=linha["covariavel"], text=" acima do limiar",
-                               showarrow=False, xanchor="left", xshift=10,
-                               font=dict(color=secundaria, size=11))
-    fig.update_layout(xaxis_title=f"SMD (linhas pontilhadas: ±{limiar})", yaxis_title=None)
-    return fig
 
 
 def treatment_group_comparison(processed: DataFrame) -> pd.DataFrame:
@@ -636,27 +497,6 @@ def redundant_pairs(corr: pd.DataFrame, cfg: PipelineConfig) -> pd.DataFrame:
     )
 
 
-def fig_correlation(corr: pd.DataFrame, cfg: PipelineConfig, theme: str = "light") -> go.Figure:
-    n_fortes = len(redundant_pairs(corr, cfg))
-    escala = viz.DIVERGING_LIGHT if theme == "light" else viz.DIVERGING_DARK
-    fig = viz.figure(
-        f"{n_fortes} par(es) de features com |r| ≥ {cfg.correlation_threshold} — redundância a vigiar no modelo",
-        "Correlação de Pearson, exclusão par a par dos nulos. Escala divergente: o zero é significativo.",
-        theme=theme,
-    )
-    fig.add_trace(go.Heatmap(
-        z=corr.to_numpy(), x=list(corr.columns), y=list(corr.index),
-        zmin=-1, zmax=1, colorscale=[list(p) for p in escala],
-        colorbar=dict(title="r", tickfont=dict(color=viz.ink(theme)[1], size=11)),
-        hovertemplate="%{y} × %{x}<br>r = %{z:.2f}<extra></extra>",
-    ))
-    lado = 22 * len(corr) + 200
-    fig.update_layout(height=lado, width=lado + 160, xaxis_tickangle=-60,
-                      xaxis_tickfont=dict(size=9), yaxis_tickfont=dict(size=9),
-                      yaxis_autorange="reversed", margin=dict(l=200, r=48, t=120, b=200))
-    return fig
-
-
 def sanity_checks(processed: DataFrame) -> pd.DataFrame:
     """Contagens de combinações que **não deveriam existir** no grão processado.
 
@@ -701,12 +541,16 @@ def sanity_checks(processed: DataFrame) -> pd.DataFrame:
 # --- Funil de resposta ----------------------------------------------------------
 
 def response_funnel(processed: DataFrame) -> pd.DataFrame:
-    """Recebido → visto → convertido, por tipo de oferta, com os dois denominadores.
+    """Recebido → visto → convertido → recorrente, por tipo de oferta.
 
     `taxa_conversao` (sobre recebidos) e `taxa_conversao_vistos` (sobre vistos) medem
     coisas diferentes: a primeira é a performance da campanha como enviada, a segunda
     é a resposta de quem foi de fato exposto. Confundir as duas infla a leitura de
     qualquer tipo com baixa taxa de view.
+
+    Recorrência: `is_recurrent=1` só em `converted=1` — outra compra na janela configurada
+    após a conversão. `taxa_recorrencia` divide por recebidos; `taxa_recorrencia_convertidos`
+    divide por convertidos (denominador correto para recompra entre quem comprou).
     """
     frame = (
         processed.groupBy("offer_type")
@@ -714,6 +558,7 @@ def response_funnel(processed: DataFrame) -> pd.DataFrame:
             F.count("*").alias("recebidos"),
             F.sum("treatment").alias("vistos"),
             F.sum("converted").alias("convertidos"),
+            F.sum("is_recurrent").alias("recorrentes"),
             F.sum("conversion_value").alias("receita"),
             F.sum("reward_cost").alias("custo"),
         )
@@ -724,27 +569,50 @@ def response_funnel(processed: DataFrame) -> pd.DataFrame:
     frame["taxa_conversao"] = frame["convertidos"] / frame["recebidos"]
     frame["taxa_conversao_vistos"] = np.where(
         frame["vistos"] > 0, frame["convertidos"] / frame["vistos"], np.nan)
+    frame["taxa_recorrencia"] = frame["recorrentes"] / frame["recebidos"]
+    frame["taxa_recorrencia_convertidos"] = np.where(
+        frame["convertidos"] > 0, frame["recorrentes"] / frame["convertidos"], np.nan)
     frame["margem_por_envio"] = (frame["receita"] - frame["custo"]) / frame["recebidos"]
     return frame
 
 
-def fig_response_funnel(frame: pd.DataFrame, theme: str = "light") -> go.Figure:
-    melhor = frame.loc[frame["taxa_conversao"].idxmax()]
-    fig = viz.figure(
-        f"O funil vaza no view, não na conversão — `{melhor['offer_type']}` converte "
-        f"{melhor['taxa_conversao']:.1%} dos envios",
-        "Recebidos → vistos → convertidos, por tipo de oferta. Barras agrupadas, mesma escala absoluta.",
-        theme=theme,
+def recurrence_by_wave(processed: DataFrame) -> pd.DataFrame:
+    """Recorrência de recompra por onda de campanha, com denominadores explícitos."""
+    return (
+        processed.groupBy("campaign_wave")
+        .agg(
+            F.count("*").alias("recebidos"),
+            F.sum("converted").alias("convertidos"),
+            F.sum("is_recurrent").alias("recorrentes"),
+        )
+        .orderBy("campaign_wave")
+        .toPandas()
+        .assign(
+            taxa_recorrencia=lambda d: d["recorrentes"] / d["recebidos"],
+            taxa_recorrencia_convertidos=lambda d: np.where(
+                d["convertidos"] > 0, d["recorrentes"] / d["convertidos"], np.nan),
+        )
     )
-    for cor, etapa in zip(viz.palette(theme), ("recebidos", "vistos", "convertidos")):
-        fig.add_trace(go.Bar(
-            x=frame["offer_type"], y=frame[etapa], name=etapa, marker_color=cor,
-            text=frame[etapa], texttemplate="%{text:,}", textposition="outside", cliponaxis=False,
-            textfont=dict(color=viz.ink(theme)[1], size=11),
-            hovertemplate=f"{etapa}<br>%{{x}}<br>%{{y:,}}<extra></extra>",
-        ))
-    fig.update_layout(barmode="group", yaxis_title="linhas do grão", xaxis_title="tipo de oferta")
-    return fig
+
+
+def recurrence_by_treatment(processed: DataFrame) -> pd.DataFrame:
+    """Recorrência por tipo de oferta × braço (viu/não viu)."""
+    return (
+        processed.groupBy("offer_type", "treatment")
+        .agg(
+            F.count("*").alias("recebidos"),
+            F.sum("converted").alias("convertidos"),
+            F.sum("is_recurrent").alias("recorrentes"),
+        )
+        .toPandas()
+        .assign(
+            taxa_recorrencia=lambda d: d["recorrentes"] / d["recebidos"],
+            taxa_recorrencia_convertidos=lambda d: np.where(
+                d["convertidos"] > 0, d["recorrentes"] / d["convertidos"], np.nan),
+        )
+        .sort_values(["offer_type", "treatment"])
+        .reset_index(drop=True)
+    )
 
 
 # --- Segmentação de clientes por K-Means (REQ-111) ------------------------------
@@ -900,38 +768,6 @@ def segment_profile(segments: pd.DataFrame) -> pd.DataFrame:
     return perfil.reset_index()
 
 
-def fig_segment_profile(perfil: pd.DataFrame, theme: str = "light") -> go.Figure:
-    """Heatmap de z-scores **entre segmentos**: quanto cada um foge da média geral.
-
-    A média em unidade original não é comparável entre colunas (reais × anos × dias);
-    o z-score por coluna responde a pergunta que interessa — este segmento é alto ou
-    baixo *nesta* dimensão, em relação aos outros. O valor bruto está na tabela ao lado.
-    """
-    colunas = list(CLUSTER_FEATURES) + ["view_rate", "conv_rate"]
-    valores = perfil.set_index("segmento")[colunas].astype("float64")
-    z = (valores - valores.mean()) / valores.std(ddof=0).replace(0, np.nan)
-
-    escala = viz.DIVERGING_LIGHT if theme == "light" else viz.DIVERGING_DARK
-    limite = float(np.nanmax(np.abs(z.to_numpy()))) or 1.0
-    fig = viz.figure(
-        f"{len(perfil)} segmentos que se separam por gasto e por perfil de crédito",
-        "Z-score da média de cada feature entre segmentos (vermelho acima da média, azul abaixo). "
-        "`view_rate` e `conv_rate` não entraram no ajuste — são a resposta, exibida para leitura.",
-        theme=theme,
-    )
-    fig.add_trace(go.Heatmap(
-        z=z.to_numpy(), x=colunas, y=list(z.index), zmin=-limite, zmax=limite,
-        colorscale=[list(p) for p in escala],
-        colorbar=dict(title="z", tickfont=dict(color=viz.ink(theme)[1], size=11)),
-        text=valores.to_numpy(), texttemplate="%{text:.4g}",
-        textfont=dict(size=10, color=viz.ink(theme)[0]),
-        hovertemplate="%{y}<br>%{x}<br>média %{text:.4g} (z = %{z:+.2f})<extra></extra>",
-    ))
-    fig.update_layout(height=90 + 46 * len(z), xaxis_tickangle=-30,
-                      margin=dict(l=160, r=48, t=130, b=90))
-    return fig
-
-
 def segment_response(processed: DataFrame, segments: DataFrame) -> pd.DataFrame:
     """Resposta observada por segmento × tipo de oferta.
 
@@ -960,29 +796,6 @@ def segment_response(processed: DataFrame, segments: DataFrame) -> pd.DataFrame:
         frame["vistos"] > 0, frame["conversoes"] / frame["vistos"], np.nan)
     frame["margem_por_envio"] = (frame["receita"] - frame["custo"]) / frame["envios"]
     return frame
-
-
-def fig_segment_response(frame: pd.DataFrame, theme: str = "light") -> go.Figure:
-    melhor = frame.loc[frame["margem_por_envio"].idxmax()]
-    pior = frame.loc[frame["margem_por_envio"].idxmin()]
-    fig = viz.figure(
-        f"Margem por envio vai de {pior['margem_por_envio']:.2f} ({pior['segmento']}, {pior['offer_type']}) "
-        f"a {melhor['margem_por_envio']:.2f} ({melhor['segmento']}, {melhor['offer_type']})",
-        "Receita atribuída menos custo do desconto, por envio. Observacional: não é o efeito causal de enviar.",
-        theme=theme,
-    )
-    segmentos = sorted(frame["segmento"].unique())
-    for cor, tipo in zip(viz.palette(theme), sorted(frame["offer_type"].unique())):
-        serie = frame[frame["offer_type"] == tipo].set_index("segmento").reindex(segmentos).reset_index()
-        fig.add_trace(go.Bar(
-            x=serie["segmento"], y=serie["margem_por_envio"], name=tipo, marker_color=cor,
-            text=serie["margem_por_envio"], texttemplate="%{text:.2f}",
-            textposition="outside", cliponaxis=False,
-            textfont=dict(color=viz.ink(theme)[1], size=10),
-            hovertemplate=f"{tipo}<br>%{{x}}<br>margem/envio %{{y:.2f}}<extra></extra>",
-        ))
-    fig.update_layout(barmode="group", yaxis_title="margem por envio", xaxis_title=None)
-    return fig
 
 
 def window_spend(attributed: DataFrame, events: DataFrame) -> DataFrame:
@@ -1071,39 +884,3 @@ def paid_below_minimum(processed: DataFrame) -> pd.DataFrame:
     frame["frac_abaixo_do_minimo"] = frame["abaixo_do_minimo"] / frame["conversoes_pagas"]
     frame["frac_custo_sob_suspeita"] = frame["custo_sob_suspeita"] / frame["custo_total"]
     return frame
-
-
-def fig_cluster_scan(scan: pd.DataFrame, k_escolhido: int, theme: str = "light") -> go.Figure:
-    """Inércia e silhouette lado a lado — nunca em dois eixos y na mesma figura.
-
-    As duas grandezas não compartilham unidade nem sentido: inércia sempre cai com `k`
-    (não é critério sozinha, só mostra o cotovelo), silhouette mede coesão e é o critério.
-    Sobrepô-las num eixo duplo sugeriria uma comparação que não existe.
-    """
-    from plotly.subplots import make_subplots
-
-    fig = make_subplots(rows=1, cols=2, subplot_titles=("inércia (cotovelo)", "silhouette (critério)"),
-                        horizontal_spacing=0.14)
-    cor = viz.palette(theme)[0]
-    for i, coluna in enumerate(("inercia", "silhouette")):
-        fig.add_trace(go.Scatter(
-            x=scan["k"], y=scan[coluna], mode="lines+markers",
-            line=dict(color=cor, width=2), marker=dict(color=cor, size=8),
-            hovertemplate=f"k=%{{x}}<br>{coluna} %{{y:.4g}}<extra></extra>",
-        ), row=1, col=i + 1)
-        fig.add_vline(x=k_escolhido, line=dict(color=viz.ink(theme)[2], width=1, dash="dot"),
-                      row=1, col=i + 1)
-
-    melhor = scan.loc[scan["silhouette"].idxmax(), "silhouette"]
-    faixa = scan["silhouette"].max() - scan["silhouette"].min()
-    base = viz.figure(
-        f"k = {k_escolhido} maximiza a silhouette ({melhor:.3f}), mas a curva é rasa "
-        f"(amplitude {faixa:.3f}): a estrutura é fraca",
-        "Varredura completa reportada — o critério é visível, não um k escolhido a posteriori.",
-        theme=theme,
-    )
-    fig.update_layout(template=base.layout.template, title=base.layout.title, showlegend=False,
-                      height=380, margin=dict(l=64, r=32, t=130, b=56))
-    fig.update_xaxes(title_text="k (número de clusters)")
-    fig.update_annotations(font=dict(size=12, color=viz.ink(theme)[1]))
-    return fig
