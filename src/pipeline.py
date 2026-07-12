@@ -42,6 +42,11 @@ def _treatment(df: DataFrame) -> DataFrame:
     return df.withColumn("treatment", F.col("view_time").isNotNull().cast("int"))
 
 
+def _stage(df: DataFrame) -> DataFrame:
+    """Materializa um estágio e trunca o lineage antes de soltar upstream."""
+    return df.localCheckpoint(eager=True)
+
+
 def _campaign_wave(df: DataFrame) -> DataFrame:
     """Onda de campanha: índice 0-based do `received_time` distinto (rank denso).
 
@@ -73,15 +78,22 @@ def assemble_processed(
     `clean.normalize_profile`. Encadeia atribuição → label → features → custo,
     junta o perfil, deriva `treatment`/`campaign_wave` e projeta no contrato.
     """
-    attributed = attribute(events, offers, cfg)
-    labeled = build_label(attributed, cfg)
-    with_recurrence = add_recurrence_flag(labeled, cfg)
-    featured = build(events, with_recurrence, offers, cfg)
-    priced = add_reward_cost(featured, offers, cfg)
+    with_recurrence = add_recurrence_flag(
+        build_label(attribute(events, offers, cfg), cfg), cfg
+    )
+    featured = _stage(build(events, with_recurrence, offers, cfg))
+    events.unpersist()
+
+    priced = _stage(add_reward_cost(featured, offers, cfg))
+    featured.unpersist()
+    offers.unpersist()
 
     enriched = priced.join(profile, on="account_id", how="left")
-    with_derived = _campaign_wave(_treatment(enriched))
-    return contract.enforce_schema(with_derived)
+    with_derived = _stage(_campaign_wave(_treatment(enriched)))
+    priced.unpersist()
+    profile.unpersist()
+
+    return _stage(contract.enforce_schema(with_derived))
 
 
 def validate(df: DataFrame, cfg: PipelineConfig) -> None:
@@ -97,9 +109,11 @@ def run(cfg: PipelineConfig, spark: SparkSession) -> DataFrame:
 
     Retorna o DataFrame processado (já materializado pela escrita).
     """
-    events = parse_events(spark, cfg)
-    offers = read_offers(spark, cfg)
-    profile = normalize_profile(read_profile(spark, cfg), cfg)
+    events = parse_events(spark, cfg).cache()
+    offers = read_offers(spark, cfg).cache()
+    profile_raw = read_profile(spark, cfg).cache()
+    profile = _stage(normalize_profile(profile_raw, cfg))
+    profile_raw.unpersist()
 
     processed = assemble_processed(events, offers, profile, cfg)
     validate(processed, cfg)
