@@ -36,9 +36,14 @@ cluster_k_min: 2
 cluster_k_max: 8
 cluster_silhouette_sample: 5000 # silhouette é O(n²) — amostra, com a seed da config
 
-# Infra do Spark local: o heap default da JVM não dá conta do dado real.
-spark_master: "local[*]"
-spark_driver_memory: "4g"
+# Infra do Spark local: o heap default da JVM não dá conta do dado real, mas o
+# teto precisa caber no hardware — nesta máquina (12 cores, 7,5 GB de RAM, ~3 GB
+# livres com o desktop aberto), local[*] + 4g de heap estoura a RAM física e o
+# SO entra em swap/thrashing (PC congela, sem erro do Spark). local[4] limita as
+# tasks concorrentes (cada uma carrega buffers próprios de sort/join) e 3g deixa
+# folga para o kernel Python e o resto do sistema.
+spark_master: "local[4]"
+spark_driver_memory: "3g"
 spark_shuffle_partitions: 16
 
 seed: 42

@@ -1,0 +1,8 @@
+{
+  "python.defaultInterpreterPath": "/home/caioolubini/Projects/ifood-coupons-uplift/.venv/bin/python",
+  "python.terminal.activateEnvironment": true,
+  "python.venvPath": "/home/caioolubini/Projects/ifood-coupons-uplift",
+  "jupyter.jupyterServerType": "local",
+  "jupyter.kernels.excludePythonEnvironments": [],
+  "notebook.kernelProviderAssociations": []
+}
