@@ -39,10 +39,6 @@ para enriquecer a comparação de estratégias além de "qual dá mais Qini/R$":
   quadrante), também com τ médio ao lado.
 - `left_on_table` — quantos `persuadable` uma estratégia de referência
   colocaria no budget que a estratégia escolhida deixa de fora.
-- `recurrence_gain_at_budget`/`recurrence_by_quadrant_at_budget` — taxa de
-  recorrência **incremental** (`is_recurrent`, tratado − controle escalado,
-  mesmo contrafactual estilo Qini de `gaincurve`) do top-N, consolidada e
-  por quadrante, com N de suporte e IC bootstrap.
 """
 
 from __future__ import annotations
@@ -50,6 +46,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
+import plotly.graph_objects as go
+
+from src import viz
 from src.config import PipelineConfig
 from src.gaincurve import (
     _profit_per_treated_conversion,
@@ -61,6 +60,11 @@ PERSUADABLE = "persuadable"
 SURE_THING = "sure_thing"
 LOST_CAUSE = "lost_cause"
 SLEEPING_DOG = "sleeping_dog"
+
+#: Ordem de leitura dos quadrantes nas figuras — do alvo causal ideal
+#: (persuadable) ao efeito negativo (sleeping_dog), passando pelos dois "sem
+#: efeito detectável". Fixa a cor e a ordem de empilhamento entre as figuras.
+QUADRANT_ORDER = (PERSUADABLE, SURE_THING, LOST_CAUSE, SLEEPING_DOG)
 
 
 def classify_quadrant(stages: pd.DataFrame, p_convert: pd.Series, cfg: PipelineConfig) -> pd.Series:
@@ -161,8 +165,8 @@ def gain_by_quadrant_at_budget(
 
     Um quadrante sem controle dentro do top-N não tem contrafactual estimável
     (a razão tratado/controle é indefinida) e sai marcado `avaliavel=False`,
-    não com um gain inventado — mesmo princípio de positividade que
-    `uplift_eval.calibration_by_bin` já aplicava por bin.
+    não com um gain inventado — o mesmo princípio de positividade que
+    `_scaled_counterfactual_gain` exige.
 
     Retorna `[quadrante, n, gain, avaliavel, tau_medio]`, um por quadrante
     presente no top-N.
@@ -191,140 +195,6 @@ def gain_by_quadrant_at_budget(
             "tau_medio": tau_top_n.loc[grupo.index].mean(),
         })
     return pd.DataFrame(linhas).sort_values("quadrante").reset_index(drop=True)
-
-
-def _recurrence_gain(converted: pd.DataFrame) -> tuple[float, int]:
-    """Taxa de recorrência incremental de um grupo de convertidos, estilo Qini.
-
-    Mesma mecânica de `gaincurve._scaled_counterfactual_gain` — contrafactual do
-    tratado estimado a partir do controle observado, escalado pela razão
-    `n_tratado/n_controle` — mas aplicada só às linhas com `converted=1`
-    (`is_recurrent` não é definida fora daí) e normalizada por `n_tratado` para
-    virar uma **taxa** incremental, não uma soma: `[Σ(is_recurrent·tratado) −
-    Σ(is_recurrent·controle)·n_tratado/n_controle] / n_tratado`. Sem controle
-    convertido no grupo, o contrafactual não é estimável — devolve `nan`.
-
-    Retorna `(recurrence_gain, n_convertidos_tratados)`; o segundo é o N de
-    suporte que sustenta a taxa (o denominador da própria fórmula).
-    """
-    treated = (converted["treatment"].to_numpy() == 1).astype(float)
-    control = 1.0 - treated
-    n_treated = treated.sum()
-    n_control = control.sum()
-    if n_treated == 0 or n_control == 0:
-        return float("nan"), int(n_treated)
-
-    is_recurrent = converted["is_recurrent"].to_numpy(dtype=float)
-    sum_treated = (is_recurrent * treated).sum()
-    sum_control = (is_recurrent * control).sum()
-    gain = (sum_treated - sum_control * (n_treated / n_control)) / n_treated
-    return gain, int(n_treated)
-
-
-def _recurrence_gain_ci(converted: pd.DataFrame, cfg: PipelineConfig) -> tuple[float, float]:
-    """IC bootstrap não paramétrico de `_recurrence_gain` (mesmo padrão de
-    `gaincurve.gain_curves_with_ci`): reamostra `converted` com reposição
-    `cfg.gain_curve_n_bootstrap` vezes e recomputa a taxa por réplica; o
-    intervalo é o percentil `cfg.gain_curve_confidence_level` das réplicas.
-    `nan` quando não há linhas a reamostrar.
-    """
-    if len(converted) == 0:
-        return float("nan"), float("nan")
-    alpha = 1.0 - cfg.gain_curve_confidence_level
-    rng = np.random.default_rng(cfg.seed)
-    replicas = np.empty(cfg.gain_curve_n_bootstrap)
-    for i in range(cfg.gain_curve_n_bootstrap):
-        sample_idx = rng.integers(0, len(converted), size=len(converted))
-        replicas[i], _ = _recurrence_gain(converted.iloc[sample_idx])
-    return tuple(np.nanquantile(replicas, [alpha / 2, 1 - alpha / 2]))
-
-
-def recurrence_by_quadrant_at_budget(
-    ranking: np.ndarray,
-    holdout_df: pd.DataFrame,
-    stages: pd.DataFrame,
-    p_convert: pd.Series,
-    cfg: PipelineConfig,
-    budget: int,
-) -> pd.DataFrame:
-    """Taxa de recorrência **incremental** do top-N de uma estratégia, por quadrante causal.
-
-    Mede uplift de recorrência — o objetivo aqui não é "quão recorrente é quem
-    converteu" isoladamente, mas "quanto a oferta *causa* de recorrência a
-    mais", do mesmo jeito que a curva de ganho (§5) mede lucro incremental: taxa
-    do tratado menos a taxa do controle, escalada pelo contrafactual estilo Qini
-    (`_recurrence_gain`). `is_recurrent` é derivada do target
-    (`attribution.add_recurrence_flag`) — entra aqui só como outcome a decompor,
-    nunca como insumo do ranking ou da classificação de quadrante. O grupo em
-    cada braço é sempre quem converteu (`converted=1`): `is_recurrent` só é
-    definida ali, e misturar não-convertidos (sempre 0) trocaria "a oferta faz
-    quem converte recorrer mais?" por "a oferta faz mais gente converter e
-    recorrer?" — duas perguntas diferentes.
-
-    `n` é o N de suporte: quantos convertidos tratados sustentam a taxa em cada
-    quadrante (o denominador da própria fórmula) — célula com `n` baixo é
-    ruído, não achado. `recurrence_gain_lo`/`_hi` são o intervalo de confiança
-    por bootstrap não paramétrico (`cfg.gain_curve_n_bootstrap` réplicas,
-    `cfg.gain_curve_confidence_level`, mesmo padrão de `gaincurve.gain_curves_with_ci`):
-    reamostra o top-N com reposição e recomputa `_recurrence_gain` por réplica.
-    Quadrante sem convertido em algum braço fica `avaliavel=False`, sem taxa
-    inventada — mesmo princípio de `gain_by_quadrant_at_budget`.
-
-    Retorna `[quadrante, n, recurrence_gain, recurrence_gain_lo,
-    recurrence_gain_hi, avaliavel, tau_medio]`, um por quadrante presente no
-    top-N.
-    """
-    top_n = ranking[:budget]
-    subset = holdout_df.loc[top_n]
-    quadrante = classify_quadrant(stages.loc[top_n], p_convert.loc[top_n], cfg)
-    tau_top_n = stages.loc[top_n, "tau"]
-
-    linhas = []
-    for nome_quadrante, grupo in subset.assign(quadrante=quadrante).groupby("quadrante", observed=True):
-        convertidos = grupo[grupo["converted"] == 1]
-        gain, n = _recurrence_gain(convertidos)
-        avaliavel = not np.isnan(gain)
-        gain_lo, gain_hi = _recurrence_gain_ci(convertidos, cfg) if avaliavel else (float("nan"), float("nan"))
-
-        linhas.append({
-            "quadrante": nome_quadrante,
-            "n": n,
-            "recurrence_gain": gain,
-            "recurrence_gain_lo": gain_lo,
-            "recurrence_gain_hi": gain_hi,
-            "avaliavel": avaliavel,
-            "tau_medio": tau_top_n.loc[grupo.index].mean(),
-        })
-    return pd.DataFrame(linhas).sort_values("quadrante").reset_index(drop=True)
-
-
-def recurrence_gain_at_budget(
-    ranking: np.ndarray,
-    holdout_df: pd.DataFrame,
-    cfg: PipelineConfig,
-    budget: int,
-) -> pd.Series:
-    """Taxa de recorrência incremental consolidada do top-N de uma estratégia (todos os quadrantes juntos).
-
-    Mesma fórmula de `recurrence_by_quadrant_at_budget`, mas sem quebrar por
-    quadrante — o número único que resume "essa estratégia, com esse budget,
-    causa quanta recorrência a mais". É a leitura de abertura antes de olhar
-    onde esse efeito se concentra por quadrante.
-
-    Retorna uma `Series` com `n`, `recurrence_gain`, `recurrence_gain_lo`,
-    `recurrence_gain_hi`.
-    """
-    top_n = ranking[:budget]
-    convertidos = holdout_df.loc[top_n].pipe(lambda df: df[df["converted"] == 1])
-    gain, n = _recurrence_gain(convertidos)
-    gain_lo, gain_hi = _recurrence_gain_ci(convertidos, cfg) if not np.isnan(gain) else (float("nan"), float("nan"))
-
-    return pd.Series({
-        "n": n,
-        "recurrence_gain": gain,
-        "recurrence_gain_lo": gain_lo,
-        "recurrence_gain_hi": gain_hi,
-    })
 
 
 def left_on_table(
@@ -362,3 +232,58 @@ def left_on_table(
         "deixados_de_fora": len(deixados_de_fora),
         "pct": len(deixados_de_fora) / n_referencia if n_referencia else float("nan"),
     }])
+
+
+def _fig_stacked_by_quadrant(
+    long: pd.DataFrame, value: str, title: str, subtitle: str, theme: str
+) -> go.Figure:
+    """Barras empilhadas: uma barra por estratégia, um segmento por quadrante.
+
+    `long` é a tabela longa `[strategy, quadrante, <value>]` (saída pivotável de
+    `composition_at_budget`/`gain_by_quadrant_at_budget`). Empilha os quadrantes
+    na ordem fixa `QUADRANT_ORDER` — cor e ordem consistentes entre as duas
+    figuras (share e receita), para o leitor comparar as duas lado a lado.
+    """
+    pivot = long.pivot(index="strategy", columns="quadrante", values=value)
+    fig = viz.figure(title, subtitle, theme=theme, barmode="stack")
+    cores = viz.palette(theme)
+    for i, quad in enumerate(QUADRANT_ORDER):
+        if quad not in pivot.columns:
+            continue
+        fig.add_trace(go.Bar(
+            x=pivot.index, y=pivot[quad], name=quad,
+            marker_color=cores[i % len(cores)], marker_line_width=0,
+        ))
+    return fig
+
+
+def fig_composition_by_quadrant(composition: pd.DataFrame, budget: int, theme: str = "light") -> go.Figure:
+    """Share de cada quadrante no top-N de cada estratégia, em barras empilhadas.
+
+    `composition` é o empilhado de `composition_at_budget` por estratégia
+    (`[strategy, quadrante, pct, ...]`). Mostra de quem cada estratégia é feita:
+    quem persegue causalidade concentra `persuadable`, quem persegue ticket
+    concentra `sure_thing`.
+    """
+    return _fig_stacked_by_quadrant(
+        composition, "pct",
+        "De quem cada estratégia é feita",
+        f"Share de cada quadrante causal no top-{budget:,} de cada estratégia.",
+        theme,
+    )
+
+
+def fig_gain_by_quadrant(gain: pd.DataFrame, budget: int, theme: str = "light") -> go.Figure:
+    """Receita incremental por quadrante no top-N de cada estratégia, empilhada.
+
+    `gain` é o empilhado de `gain_by_quadrant_at_budget` por estratégia
+    (`[strategy, quadrante, gain, ...]`). Mostra de qual quadrante vem o lucro
+    incremental de cada estratégia — quase tudo deve vir de `persuadable` se a
+    ordenação captura efeito causal.
+    """
+    return _fig_stacked_by_quadrant(
+        gain, "gain",
+        "De qual quadrante vem o lucro incremental",
+        f"Lucro líquido incremental (R$) por quadrante causal no top-{budget:,} de cada estratégia.",
+        theme,
+    )

@@ -226,7 +226,7 @@ class BlendedUpliftModel:
     entrega e a curva de ganho consome.
 
     O rank é por **amostragem softmax (Boltzmann)** por padrão (`temperature`,
-    default 0,2): a ordem é sorteada com chance ∝ `exp(score_norm/τ)`, dando
+    default 0,1): a ordem é sorteada com chance ∝ `exp(score_norm/τ)`, dando
     chance a clientes logo abaixo do corte (`gaincurve.softmax_ranking`). `τ=0`
     recupera o determinístico (ordena por score). Reprodutível pela `seed`
     (herdada do X-learner) quando nenhum `rng` é passado.
@@ -239,7 +239,7 @@ class BlendedUpliftModel:
         mode: str = "fixed",
         lambda_: float = 0.3,
         gamma: float = 1.0,
-        temperature: float = 0.2,
+        temperature: float = 0.1,
         seed: int = 42,
     ) -> None:
         if mode not in ("fixed", "dynamic"):

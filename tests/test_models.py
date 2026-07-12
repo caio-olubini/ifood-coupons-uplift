@@ -157,11 +157,11 @@ def test_blended_from_config_reads_blend_defaults():
 
 def test_blended_temperature_default_is_softmax():
     """O rank padrão dos modelos é softmax: o default de `blend_temperature` é
-    0,2 (>0), não determinístico. Guarda a decisão de que softmax é o padrão.
+    0,1 (>0), não determinístico. Guarda a decisão de que softmax é o padrão.
     """
     cfg = load()
-    assert cfg.blend_temperature == 0.2
-    assert BlendedUpliftModel.from_config(cfg).temperature == 0.2
+    assert cfg.blend_temperature == 0.1
+    assert BlendedUpliftModel.from_config(cfg).temperature == 0.1
 
 
 def test_blended_rank_e_deterministico_pela_seed():

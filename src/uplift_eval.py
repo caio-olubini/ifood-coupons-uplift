@@ -257,3 +257,58 @@ def fig_blend_importance(importance: pd.DataFrame, top: int = 15, theme: str = "
             marker_color=cores[i % len(cores)], marker_line_width=0,
         ))
     return fig
+
+
+def fig_importance_side_by_side(importance: pd.DataFrame, top: int = 15, theme: str = "light") -> go.Figure:
+    """Importância do modelo de uplift e do modelo de conversão, lado a lado.
+
+    Dois painéis com o mesmo conjunto de features (as `top` por importância
+    combinada, para os dois painéis compararem as mesmas linhas): à esquerda o
+    que dirige o **efeito causal** (τ), à direita o que dirige a **propensão a
+    converter**. Ler os dois lado a lado mostra onde as fontes concordam e onde
+    a causal destaca uma feature que a preditiva ignora. `importance` é a saída
+    de `BlendedUpliftModel.feature_importance`.
+    """
+    from plotly.subplots import make_subplots
+
+    dados = importance.sort_values("combined", ascending=False).head(top).iloc[::-1]
+    cores = viz.palette(theme)
+    fig = make_subplots(
+        rows=1, cols=2, shared_yaxes=True, horizontal_spacing=0.06,
+        subplot_titles=("Efeito causal (uplift)", "Propensão a converter"),
+    )
+    fig.add_trace(go.Bar(
+        y=dados.index, x=dados["uplift"], orientation="h",
+        marker_color=cores[1], marker_line_width=0, showlegend=False,
+    ), row=1, col=1)
+    fig.add_trace(go.Bar(
+        y=dados.index, x=dados["conversion"], orientation="h",
+        marker_color=cores[2], marker_line_width=0, showlegend=False,
+    ), row=1, col=2)
+    base = viz.figure(
+        "O que cada metade do blend valoriza",
+        f"Importância normalizada das top {top} features, por modelo.",
+        theme=theme,
+    )
+    fig.update_layout(template=base.layout.template, title=base.layout.title)
+    return fig
+
+
+def fig_combined_importance(importance: pd.DataFrame, top: int = 15, theme: str = "light") -> go.Figure:
+    """Importância **combinada** do blend, em barras horizontais.
+
+    A série `combined` (`imp_causal + λ·imp_conversão` renormalizada) sozinha —
+    a que de fato ordena o score de produção. `importance` é a saída de
+    `BlendedUpliftModel.feature_importance`.
+    """
+    dados = importance.sort_values("combined", ascending=False).head(top).iloc[::-1]
+    fig = viz.figure(
+        "O que dirige o score de produção",
+        f"Top {top} features por importância combinada do blend.",
+        theme=theme,
+    )
+    fig.add_trace(go.Bar(
+        y=dados.index, x=dados["combined"], orientation="h",
+        marker_color=viz.palette(theme)[0], marker_line_width=0,
+    ))
+    return fig

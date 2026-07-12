@@ -73,10 +73,10 @@ blend_gamma: 1.0
 
 # Temperatura da amostragem softmax na etapa de rank — o mecanismo de rank
 # padrão dos modelos (rank/serve/predict). τ→0 = determinístico (corte duro por
-# score), τ alto → loteria uniforme; τ=0,2 dá chance a quem está logo abaixo do
+# score), τ alto → loteria uniforme; τ=0,1 dá chance a quem está logo abaixo do
 # corte. Reprodutível pela seed, estocástico por design. Zerar recupera o
 # determinístico.
-blend_temperature: 0.2
+blend_temperature: 0.1
 
 # Serving (`python -m src.cli predict`): budget default (nº de ações a
 # recomendar) sem `--budget`. Uma oferta por cliente, então é também o nº de
