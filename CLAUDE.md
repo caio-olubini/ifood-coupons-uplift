@@ -17,12 +17,14 @@ uv sync                        # instala dependências (inclui grupo dev)
 uv run pytest -q               # roda toda a suíte de testes de integridade
 uv run pytest tests/test_leakage.py -q   # um arquivo só
 
-uv run python -m src.pipeline   # bruto → data/processed/ (valida o contrato antes de escrever)
-uv run python -m src.pipeline --config outra.yaml
+uv run coupons-uplift pipeline   # bruto → data/processed/ (valida o contrato antes de escrever)
+uv run coupons-uplift pipeline --config outra.yaml
 
-uv run python -m src.cli train                       # ajusta o BlendedUpliftModel e serializa em models_dir
-uv run python -m src.cli predict --budget 5000       # recomenda top-N ações (uma oferta por cliente)
-uv run python -m src.cli predict --out recs.csv      # escreve o CSV em vez de imprimir
+uv run coupons-uplift train                       # ajusta o BlendedUpliftModel e serializa em models_dir
+uv run coupons-uplift predict --budget 5000       # recomenda top-N ações (uma oferta por cliente)
+uv run coupons-uplift predict --out recs.csv      # escreve o CSV em vez de imprimir
+
+uv run coupons-uplift export                      # artefatos estáticos do simulador → simulator/data/
 
 # Executar um notebook de ponta a ponta (nbclient já está no grupo dev):
 uv run python -c "import nbformat; from nbclient import NotebookClient; \
@@ -149,10 +151,10 @@ incremental por budget top-N** (`src/gaincurve.py`, REQ-206/T-208).
 `auc_lgbm=0.85` supera `auc_logit=0.80` (T-203 ok).
 
 **CLI de produto `train`/`predict` (`src/cli.py`, `src/serve.py`) — 2026-07-11,
-por pedido do usuário.** `python -m src.cli train` ajusta o `BlendedUpliftModel`
+por pedido do usuário.** `uv run coupons-uplift train` ajusta o `BlendedUpliftModel`
 da config no lado de treino do split temporal (sem `informational`) e o serializa
 em `cfg.models_dir` — mesma preparação de dado do notebook, sobre os wrappers de
-`src/models.py`, sem número novo. `python -m src.cli predict` é o **serve de
+`src/models.py`, sem número novo. `uv run coupons-uplift predict` é o **serve de
 verdade, não predição sobre a base histórica** (decisão explícita do usuário:
 "predict na base histórica não é produto"): monta a matriz de scoring
 **clientes × ofertas ativas** as-of um instante de decisão (`--decision-time`,
@@ -497,7 +499,7 @@ onze seções (panorama, eventos no tempo, qualidade, distribuições, correlaç
 segmentação, resposta por segmento, diagnóstico causal, por que uplift, síntese), números e
 gráficos primeiro e leitura curta depois. Referencia o audit para garantia, não repete provas;
 máximo 12 figuras, tema de `src/viz.py` em todas. Ambos rodam de ponta a ponta com "Run All",
-só importam de `src/` e leem `data/processed/` (escrito por `python -m src.pipeline`).
+só importam de `src/` e leem `data/processed/` (escrito por `uv run coupons-uplift pipeline`).
 
 A segmentação (REQ-111) tem geometria explícita porque K-Means só significa algo com ela:
 `identity_missing` fica **fora** do ajuste (não se imputa um segmento), `log1p` nas caudas de

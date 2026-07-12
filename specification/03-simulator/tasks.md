@@ -198,7 +198,7 @@ e `holdout.json` (rotulado, para o analytics). `validation.json` sai de escopo.
 - **Satisfies:** REQ-310
 - **Depends on:** T-307
 - **Files:** `simulator/README.md`
-- **Do:** Documentar os 4 passos: `pipeline` → `train` → `python -m simulator.export`
+- **Do:** Documentar os 4 passos: `pipeline` → `train` → `coupons-uplift export`
   → `python -m http.server` em `simulator/` (teste local).
 - **Accept:** um revisor sem contexto prévio consegue rodar o simulador seguindo só o
   README.

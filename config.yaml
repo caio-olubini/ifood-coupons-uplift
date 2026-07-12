@@ -96,7 +96,7 @@ blend_gamma: 1.0
 # determinístico.
 blend_temperature: 0.1
 
-# Serving (`python -m src.cli predict`): budget default (nº de ações a
+# Serving (`uv run coupons-uplift predict`): budget default (nº de ações a
 # recomendar) sem `--budget`. Uma oferta por cliente, então é também o nº de
 # clientes distintos atendidos.
 predict_budget: 1000

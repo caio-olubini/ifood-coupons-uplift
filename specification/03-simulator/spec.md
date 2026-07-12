@@ -102,8 +102,8 @@ projeto (τ, CATE, contrafactual) fica na spec e no código — nunca cru na tel
 ## Arquitetura
 
 ```
-uv run python -m src.cli train                 (pré-requisito)
-uv run python -m simulator.export               (job único, Spark + modelos)
+uv run coupons-uplift train                 (pré-requisito)
+uv run coupons-uplift export               (job único, Spark + modelos)
         │
         ▼
 simulator/data/
@@ -371,7 +371,7 @@ Nada hardcoded no export nem no JS (defaults do JS vêm de `metadata.json`).
 
 ### REQ-310 — Entrypoint, docs e smoke
 
-- `uv run python -m simulator.export [--config ...]`; `simulator/README.md` com os 4
+- `uv run coupons-uplift export [--config ...]`; `simulator/README.md` com os 4
   passos (pipeline → train → export → `python -m http.server` em `simulator/` **para
   teste local** — em produção o servidor é o próprio GitHub Pages).
 - Smoke test Python (`tests/test_simulator_export.py`): uma oferta por cliente,

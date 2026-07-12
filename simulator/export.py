@@ -1,6 +1,6 @@
 """Export offline dos artefatos estáticos do simulador (spec 03, REQ-301/305).
 
-`uv run python -m simulator.export [--config ...]`
+`uv run coupons-uplift export [--config ...]`
 
 Congela a matriz de scoring (clientes × ofertas ativas as-of um instante de
 decisão) e o holdout rotulado em JSON estático, para a UI (JS no browser)
@@ -195,6 +195,85 @@ def _metadata_labels() -> dict[str, object]:
             "Ganho medido no histórico de validação — o que já aconteceu nos dados, "
             "não uma previsão para frente."
         ),
+        "glossary": [
+            {
+                "term": "Estratégia",
+                "definition": (
+                    "A regra que define em que ordem os clientes são priorizados "
+                    "para receber cupom."
+                ),
+            },
+            {
+                "term": "Enviados",
+                "definition": (
+                    "Quantos clientes recebem cupom no orçamento escolhido — "
+                    "um cupom por cliente."
+                ),
+            },
+            {
+                "term": "Conversões esperadas",
+                "definition": (
+                    "Quantas compras o modelo prevê no total, somando a chance de "
+                    "conversão de cada cliente escolhido. Nem toda compra prevista "
+                    "acontece por causa do cupom."
+                ),
+            },
+            {
+                "term": "Receita bruta esperada",
+                "definition": (
+                    "Valor total de compra previsto antes do desconto, calculado "
+                    "a partir das conversões esperadas e do ticket médio histórico."
+                ),
+            },
+            {
+                "term": "Conversões incrementais",
+                "definition": (
+                    "Compras que só acontecem por causa do cupom — o efeito causal "
+                    "da oferta, não quem já compraria de qualquer jeito."
+                ),
+            },
+            {
+                "term": "Lucro projetado",
+                "definition": (
+                    "Ganho líquido incremental estimado: conversões incrementais "
+                    "multiplicadas pelo lucro médio por conversão no histórico."
+                ),
+            },
+            {
+                "term": "Desconto esperado",
+                "definition": (
+                    "Custo previsto em cupons: para cada cliente, chance de conversão "
+                    "vezes o valor do desconto da oferta escolhida."
+                ),
+            },
+            {
+                "term": "Quadrantes",
+                "definition": (
+                    "Tipos de cliente segundo a resposta ao cupom: persuadables "
+                    "(convencem a comprar), sure things (já compram), lost causes "
+                    "(dificilmente convertem) e sleeping dogs (o cupom atrapalha)."
+                ),
+            },
+            {
+                "term": "Orçamento",
+                "definition": "Quantos cupons você pretende enviar nesta campanha.",
+            },
+            {
+                "term": "Exploração",
+                "definition": (
+                    "Mistura um pouco de acaso na ordem de prioridade — disponível "
+                    "apenas em Priorizar uplift, para não ficar preso nos mesmos clientes."
+                ),
+            },
+            {
+                "term": "Projeção vs. comparativo",
+                "definition": (
+                    "A projeção estima o retorno para frente da campanha escolhida; "
+                    "o comparativo roda as três estratégias com os mesmos filtros "
+                    "para ver qual rende mais naquela configuração."
+                ),
+            },
+        ],
     }
 
 

@@ -157,6 +157,17 @@ def test_lucro_projetado_bate_soma_manual():
     assert tau_sum * lucro_medio == pytest.approx(4.5)
 
 
+def test_conversoes_esperadas_bate_soma_p_convert():
+    p_values = [0.5, 0.3, 0.8]
+    assert sum(p_values) == pytest.approx(1.6)
+
+
+def test_receita_bruta_bate_p_sum_vezes_receita_media():
+    p_sum = 0.5 + 0.3
+    receita_media = 20.0
+    assert p_sum * receita_media == pytest.approx(16.0)
+
+
 def test_curva_de_ganho_bate_com_gaincurve():
     holdout = pd.DataFrame({
         "account_id": ["a", "b", "c", "d"],

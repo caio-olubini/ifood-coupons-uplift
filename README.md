@@ -22,8 +22,8 @@ uv sync                        # install deps (includes the dev group)
 ### Data pipeline — raw → processed
 
 ```bash
-uv run python -m src.pipeline                    # raw JSONs → data/processed/ (validates the contract before writing)
-uv run python -m src.pipeline --config other.yaml
+uv run coupons-uplift pipeline                    # raw JSONs → data/processed/ (validates the contract before writing)
+uv run coupons-uplift pipeline --config other.yaml
 ```
 
 Reads the 3 raw JSONs, runs the full staged transform (parse → clean →
@@ -33,9 +33,15 @@ attribution → label → features → cost → contract), validates against
 ### Product CLI — train / predict
 
 ```bash
-uv run python -m src.cli train                       # fit BlendedUpliftModel on the training split, serialize into models_dir
-uv run python -m src.cli predict --budget 5000       # recommend the top-N actions (one offer per customer)
-uv run python -m src.cli predict --out recs.csv      # write the CSV instead of printing
+uv run coupons-uplift train                       # fit BlendedUpliftModel on the training split, serialize into models_dir
+uv run coupons-uplift predict --budget 5000       # recommend the top-N actions (one offer per customer)
+uv run coupons-uplift predict --out recs.csv      # write the CSV instead of printing
+```
+
+### Simulator export
+
+```bash
+uv run coupons-uplift export                      # freeze simulator/data/ JSON artifacts
 ```
 
 - **`train`** fits the `BlendedUpliftModel` from the config on the training side
@@ -70,8 +76,8 @@ NotebookClient(nb,timeout=5400,kernel_name='python3',resources={'metadata':{'pat
 |---|---|
 | `config.yaml` | Every behavior parameter of the pipeline & modeling (REQ-110). Nothing is hardcoded in `src/`. |
 | `data/raw/` | The 3 input JSONs: `offers.json`, `profile.json`, `transactions.json`. |
-| `data/processed/` | Output of `python -m src.pipeline` — partitioned Parquet at grain `(account_id, offer_id, received_time)`. The contract between pipeline and modeling. |
-| `models/` | Serialized fitted model (`blended_uplift_model.pkl`) — where `cli train` writes and `cli predict` reads. |
+| `data/processed/` | Output of `coupons-uplift pipeline` — partitioned Parquet at grain `(account_id, offer_id, received_time)`. The contract between pipeline and modeling. |
+| `models/` | Serialized fitted model (`blended_uplift_model.pkl`) — where `coupons-uplift train` writes and `coupons-uplift predict` reads. |
 | `mlflow.db` | Local SQLite MLflow tracking store (no server). |
 | `src/` | All logic — pure, testable functions. Notebooks only import from here and display. |
 | `tests/` | ~36 structural integrity tests (guarantees G1–G10, REQ-2xx, boundary invariants). |
@@ -105,7 +111,8 @@ NotebookClient(nb,timeout=5400,kernel_name='python3',resources={'metadata':{'pat
 | `gaincurve.py` | Offline eval: incremental gain curve per budget top-N; hybrid/dynamic blend scoring; bootstrap CIs. |
 | `models.py` | Model wrappers: `UpliftModel`, `ConversionModel`, `BlendedUpliftModel` (production model). `from_config`, `save`/`load`, `feature_importance`. |
 | `serve.py` | `build_scoring_frame` (customers × active offers), `recommend` (one offer/customer + top-N by budget). |
-| `cli.py` | Product CLI `train`/`predict` — orchestrates `models` + `serve` + `split`. |
+| `cli.py` | `train`/`predict` implementations — orchestrates `models` + `serve` + `split`. |
+| `main.py` | Unified CLI entry point (`coupons-uplift` script). |
 | `quadrant.py` | Uplift-quadrant classification, gain-by-quadrant, recurrence-by-quadrant. |
 | `tracking.py` | MLflow experiment tracking. |
 | `eda.py` | EDA / covariate balance / K-Means segmentation functions (Spark → small pandas + figures). |
@@ -116,7 +123,7 @@ NotebookClient(nb,timeout=5400,kernel_name='python3',resources={'metadata':{'pat
 ## What's implemented
 
 - **Data pipeline (raw → processed).** Full staged transform behind
-  `python -m src.pipeline`: parse → clean → attribution → influence-aware label →
+  `coupons-uplift pipeline`: parse → clean → attribution → influence-aware label →
   leakage-free features → reward cost → executable contract + write. Output grain
   `(account_id, offer_id, received_time)`, unique.
 - **Structural guarantees G1–G10.** Tested invariants over the real data: unique

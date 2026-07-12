@@ -2,8 +2,8 @@
 
 Fecha a fronteira treinar→prever que os wrappers de `src.models` habilitam:
 
-    uv run python -m src.cli train
-    uv run python -m src.cli predict --budget 5000 --out recomendacoes.csv
+    uv run coupons-uplift train
+    uv run coupons-uplift predict --budget 5000 --out recomendacoes.csv
 
 `train` ajusta o `BlendedUpliftModel` padrão da config no lado de treino do split
 temporal (sem `informational`) e o escreve em `cfg.models_dir`. `predict` **não**
