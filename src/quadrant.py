@@ -46,9 +46,6 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 
-import plotly.graph_objects as go
-
-from src import viz
 from src.config import PipelineConfig
 from src.gaincurve import (
     _profit_per_treated_conversion,
@@ -232,58 +229,3 @@ def left_on_table(
         "deixados_de_fora": len(deixados_de_fora),
         "pct": len(deixados_de_fora) / n_referencia if n_referencia else float("nan"),
     }])
-
-
-def _fig_stacked_by_quadrant(
-    long: pd.DataFrame, value: str, title: str, subtitle: str, theme: str
-) -> go.Figure:
-    """Barras empilhadas: uma barra por estratégia, um segmento por quadrante.
-
-    `long` é a tabela longa `[strategy, quadrante, <value>]` (saída pivotável de
-    `composition_at_budget`/`gain_by_quadrant_at_budget`). Empilha os quadrantes
-    na ordem fixa `QUADRANT_ORDER` — cor e ordem consistentes entre as duas
-    figuras (share e receita), para o leitor comparar as duas lado a lado.
-    """
-    pivot = long.pivot(index="strategy", columns="quadrante", values=value)
-    fig = viz.figure(title, subtitle, theme=theme, barmode="stack")
-    cores = viz.palette(theme)
-    for i, quad in enumerate(QUADRANT_ORDER):
-        if quad not in pivot.columns:
-            continue
-        fig.add_trace(go.Bar(
-            x=pivot.index, y=pivot[quad], name=quad,
-            marker_color=cores[i % len(cores)], marker_line_width=0,
-        ))
-    return fig
-
-
-def fig_composition_by_quadrant(composition: pd.DataFrame, budget: int, theme: str = "light") -> go.Figure:
-    """Share de cada quadrante no top-N de cada estratégia, em barras empilhadas.
-
-    `composition` é o empilhado de `composition_at_budget` por estratégia
-    (`[strategy, quadrante, pct, ...]`). Mostra de quem cada estratégia é feita:
-    quem persegue causalidade concentra `persuadable`, quem persegue ticket
-    concentra `sure_thing`.
-    """
-    return _fig_stacked_by_quadrant(
-        composition, "pct",
-        "De quem cada estratégia é feita",
-        f"Share de cada quadrante causal no top-{budget:,} de cada estratégia.",
-        theme,
-    )
-
-
-def fig_gain_by_quadrant(gain: pd.DataFrame, budget: int, theme: str = "light") -> go.Figure:
-    """Receita incremental por quadrante no top-N de cada estratégia, empilhada.
-
-    `gain` é o empilhado de `gain_by_quadrant_at_budget` por estratégia
-    (`[strategy, quadrante, gain, ...]`). Mostra de qual quadrante vem o lucro
-    incremental de cada estratégia — quase tudo deve vir de `persuadable` se a
-    ordenação captura efeito causal.
-    """
-    return _fig_stacked_by_quadrant(
-        gain, "gain",
-        "De qual quadrante vem o lucro incremental",
-        f"Lucro líquido incremental (R$) por quadrante causal no top-{budget:,} de cada estratégia.",
-        theme,
-    )

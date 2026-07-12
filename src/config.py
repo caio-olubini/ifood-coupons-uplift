@@ -63,6 +63,18 @@ class PipelineConfig(BaseSettings):
     cluster_k_max: int = Field(default=8, gt=1)
     cluster_silhouette_sample: int = Field(default=5000, gt=1)
 
+    # Features do clustering de personas (`src/clustering`), a nível cliente e
+    # descritivas (janela inteira — nunca viram feature do X-learner). A lista é
+    # comportamento e vive na config (REQ-110), não escondida no módulo; o
+    # `log1p` das caudas monetárias é propriedade da transformação e fica em
+    # `clustering.preprocess.LOG_FEATURES`. Fora daqui de propósito: `conv_rate`/
+    # `converted` (a resposta que os segmentos explicam — clusterizar por ela
+    # seria circular) e `identity_missing` (é um segmento à parte, não um eixo).
+    cluster_features: list[str] = Field(
+        default=["age", "credit_card_limit", "tenure_days",
+                 "spend_total", "txn_count", "avg_ticket", "view_rate"]
+    )
+
     # Infraestrutura do Spark (execução local). Não é semântica de pipeline, mas
     # também não é valor mágico: o default de heap da JVM não roda o dado real.
     spark_master: str = "local[*]"
@@ -179,6 +191,18 @@ class PipelineConfig(BaseSettings):
     mlflow_tracking_uri: str = "sqlite:///mlflow.db"
     mlflow_experiment_name: str = "ifood-uplift"
 
+    # Simulador (spec 03, REQ-309): interface HTML estática que orquestra o serving
+    # existente. `simulator.export` escreve os artefatos JSON aqui; a UI (JS no
+    # browser) refaz a seleção do `serve.recommend` sobre eles. Todo parâmetro de
+    # comportamento vive na config (REQ-110); os defaults do JS vêm do metadata.json.
+    simulator_output_dir: Path = Path("simulator/data")
+    simulator_default_budget: int = Field(default=1000, gt=0)
+    # γ do score-base "uplift" da UI (blend dinâmico); espelha `blend_gamma`.
+    simulator_score_gamma: float = Field(default=1.0, gt=0)
+    # Slider de temperatura de exploração: começa em exploit puro (0), teto configurável.
+    simulator_temperature_default: float = Field(default=0.0, ge=0)
+    simulator_temperature_max: float = Field(default=1.0, gt=0)
+
     model_config = {"frozen": True, "yaml_file": DEFAULT_CONFIG_PATH}
 
     @model_validator(mode="after")
@@ -191,6 +215,8 @@ class PipelineConfig(BaseSettings):
             raise ValueError("cluster_k_max deve ser > cluster_k_min")
         if self.validation_wave_cutoff >= self.n_campaign_waves:
             raise ValueError("validation_wave_cutoff deve ser < n_campaign_waves")
+        if self.simulator_temperature_default > self.simulator_temperature_max:
+            raise ValueError("simulator_temperature_default deve ser <= simulator_temperature_max")
         return self
 
     @property

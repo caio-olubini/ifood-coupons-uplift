@@ -1,0 +1,41 @@
+# Publica o simulador estático em GitHub Pages (spec 03, REQ-311, T-312).
+# O artefato deployado é a pasta simulator/ — paths relativos (./data/*.json)
+# funcionam com a URL https://<user>.github.io/<repo>/.
+
+name: Deploy simulador (GitHub Pages)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "simulator/**"
+      - ".github/workflows/deploy-simulator-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: simulator
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4

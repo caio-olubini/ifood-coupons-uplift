@@ -36,6 +36,19 @@ cluster_k_min: 2
 cluster_k_max: 8
 cluster_silhouette_sample: 5000 # silhouette é O(n²) — amostra, com a seed da config
 
+# Features do clustering de personas (src/clustering), a nível cliente e
+# descritivas (janela inteira — nunca viram feature do X-learner). conv_rate e
+# identity_missing ficam de fora de propósito (resposta / segmento à parte); o
+# log1p das caudas é da transformação (clustering.preprocess.LOG_FEATURES).
+cluster_features:
+  - age
+  - credit_card_limit
+  - tenure_days
+  - spend_total
+  - txn_count
+  - avg_ticket
+  - view_rate
+
 # Infra do Spark local: o heap default da JVM não dá conta do dado real, mas o
 # teto precisa caber no hardware — nesta máquina (12 cores, 7,5 GB de RAM, ~3 GB
 # livres com o desktop aberto), local[*] + 4g de heap estoura a RAM física e o
@@ -43,7 +56,7 @@ cluster_silhouette_sample: 5000 # silhouette é O(n²) — amostra, com a seed d
 # tasks concorrentes (cada uma carrega buffers próprios de sort/join) e 3g deixa
 # folga para o kernel Python e o resto do sistema.
 spark_master: "local[4]"
-spark_driver_memory: "3g"
+spark_driver_memory: "2g"
 spark_shuffle_partitions: 16
 
 seed: 42

@@ -1,0 +1,962 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Simulador de Cupons — iFood</title>
+  <style>
+    :root {
+      --ifood-red: #ea1d2c;
+      --ifood-red-dark: #c11424;
+      --ink: #3e3e3e;
+      --ink-strong: #1a1a1a;
+      --ink-muted: #717171;
+      --surface: #ffffff;
+      --surface-alt: #f7f7f7;
+      --border: #eaeaea;
+      --radius: 10px;
+      --shadow: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+      --font: "Inter", -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+      --gain-uplift: #2d6a4f;
+      --gain-conversao: #b08900;
+      --gain-aleatorio: #6c757d;
+    }
+
+    * { box-sizing: border-box; }
+
+    html, body {
+      margin: 0;
+      padding: 0;
+      background: var(--surface-alt);
+      color: var(--ink);
+      font-family: var(--font);
+      font-size: 16px;
+      line-height: 1.5;
+      -webkit-font-smoothing: antialiased;
+    }
+
+    header.brand {
+      background: var(--ifood-red);
+      color: #fff;
+      padding: 20px 32px;
+      display: flex;
+      align-items: baseline;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      box-shadow: var(--shadow);
+    }
+    header.brand .wordmark { font-size: 1.5rem; font-weight: 800; letter-spacing: -0.02em; }
+    header.brand .subtitle { font-size: 0.95rem; font-weight: 500; opacity: 0.92; }
+    header.brand nav a {
+      color: #fff;
+      text-decoration: none;
+      font-size: 0.9rem;
+      font-weight: 600;
+      opacity: 0.9;
+      margin-left: 20px;
+    }
+    header.brand nav a:hover { opacity: 1; text-decoration: underline; }
+
+    main { max-width: 1120px; margin: 0 auto; padding: 32px; }
+
+    .lead {
+      font-size: 1.05rem;
+      max-width: 68ch;
+      margin: 0 0 28px;
+    }
+    .lead strong { color: var(--ink-strong); }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 24px;
+      margin-bottom: 24px;
+    }
+    .card h2 {
+      margin: 0 0 4px;
+      font-size: 1.15rem;
+      font-weight: 700;
+      color: var(--ink-strong);
+    }
+    .card .hint { margin: 0 0 18px; font-size: 0.9rem; color: var(--ink-muted); }
+
+    .meta-strip { display: flex; flex-wrap: wrap; gap: 28px; margin-bottom: 24px; }
+    .meta-strip .metric .value { font-size: 1.6rem; font-weight: 800; color: var(--ink-strong); line-height: 1.1; }
+    .meta-strip .metric .label { font-size: 0.8rem; color: var(--ink-muted); }
+
+    .presets { display: flex; flex-wrap: wrap; gap: 10px; margin-bottom: 20px; }
+    .btn-preset {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--ink);
+      font-family: var(--font);
+      font-size: 0.85rem;
+      font-weight: 600;
+      padding: 8px 16px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .btn-preset:hover { border-color: var(--ifood-red); background: #fff5f5; }
+    .btn-preset:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(234, 29, 44, 0.2); }
+
+    .controls { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 24px; }
+    .control label.field-label {
+      display: block;
+      font-size: 0.8rem;
+      font-weight: 600;
+      color: var(--ink-strong);
+      margin-bottom: 8px;
+    }
+    .control .field-help { font-size: 0.78rem; color: var(--ink-muted); margin-top: 6px; }
+    .control select, .control input[type="number"] {
+      width: 100%;
+      padding: 9px 12px;
+      font-family: var(--font);
+      font-size: 0.92rem;
+      color: var(--ink-strong);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      transition: border-color 0.15s, box-shadow 0.15s;
+    }
+    .control select:focus, .control input[type="number"]:focus {
+      outline: none;
+      border-color: var(--ifood-red);
+      box-shadow: 0 0 0 3px rgba(234, 29, 44, 0.12);
+    }
+    .checks { display: flex; flex-direction: column; gap: 8px; }
+    .check {
+      display: flex;
+      align-items: flex-start;
+      gap: 9px;
+      font-size: 0.92rem;
+      cursor: pointer;
+    }
+    .check input { accent-color: var(--ifood-red); width: 16px; height: 16px; margin-top: 3px; cursor: pointer; flex-shrink: 0; }
+    .check .check-label { line-height: 1.35; }
+    .check .check-sub { display: block; font-size: 0.78rem; color: var(--ink-muted); font-weight: 400; }
+
+    .control input[type="range"] { width: 100%; accent-color: var(--ifood-red); cursor: pointer; }
+    .control.disabled { opacity: 0.55; pointer-events: none; }
+
+    .actions { margin-top: 24px; display: flex; flex-wrap: wrap; gap: 12px; align-items: center; }
+    .btn-primary {
+      appearance: none;
+      border: none;
+      background: var(--ifood-red);
+      color: #fff;
+      font-family: var(--font);
+      font-size: 0.98rem;
+      font-weight: 700;
+      padding: 12px 28px;
+      border-radius: 8px;
+      cursor: pointer;
+      transition: background 0.15s;
+    }
+    .btn-primary:hover { background: var(--ifood-red-dark); }
+    .btn-primary:focus-visible { outline: none; box-shadow: 0 0 0 3px rgba(234, 29, 44, 0.3); }
+
+    .btn-secondary {
+      appearance: none;
+      border: 1px solid var(--border);
+      background: var(--surface);
+      color: var(--ink-strong);
+      font-family: var(--font);
+      font-size: 0.92rem;
+      font-weight: 600;
+      padding: 10px 20px;
+      border-radius: 8px;
+      cursor: pointer;
+    }
+    .btn-secondary:hover:not(:disabled) { border-color: var(--ifood-red); }
+    .btn-secondary:disabled { opacity: 0.45; cursor: not-allowed; }
+
+    .notice {
+      margin-top: 16px;
+      padding: 10px 14px;
+      border-radius: 8px;
+      background: #fdf6e6;
+      border: 1px solid #f0dcae;
+      color: #8a5a00;
+      font-size: 0.85rem;
+    }
+    .notice.hidden { display: none; }
+
+    .projection-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 20px;
+      margin-bottom: 12px;
+    }
+    .projection-grid .metric .value { font-size: 1.5rem; font-weight: 800; color: var(--ink-strong); }
+    .projection-grid .metric .label { font-size: 0.8rem; color: var(--ink-muted); }
+    .disclaimer { font-size: 0.8rem; color: var(--ink-muted); font-style: italic; margin: 0; }
+
+    .table-scroll { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+    thead th {
+      text-align: left;
+      font-weight: 600;
+      color: var(--ink-muted);
+      text-transform: uppercase;
+      letter-spacing: 0.03em;
+      font-size: 0.72rem;
+      padding: 10px 14px;
+      border-bottom: 2px solid var(--border);
+      white-space: nowrap;
+    }
+    tbody td { padding: 9px 14px; border-bottom: 1px solid var(--border); }
+    tbody tr:hover { background: var(--surface-alt); }
+    td.mono { font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 0.82rem; color: var(--ink-muted); }
+    td.num { text-align: right; font-variant-numeric: tabular-nums; }
+
+    .pill {
+      display: inline-block;
+      padding: 2px 10px;
+      border-radius: 999px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      background: var(--surface-alt);
+      border: 1px solid var(--border);
+    }
+    .pill.bogo { color: #0a6b4f; border-color: #bfe3d3; background: #eafaf3; }
+    .pill.discount { color: #8a5a00; border-color: #f0dcae; background: #fdf6e6; }
+    .pill.informational { color: #4a4a4a; }
+
+    .analytics-table .strat-uplift { color: var(--gain-uplift); font-weight: 700; }
+    .analytics-table .strat-conversao { color: var(--gain-conversao); font-weight: 600; }
+    .analytics-table .strat-aleatorio { color: var(--gain-aleatorio); }
+
+    .status { padding: 40px; text-align: center; color: var(--ink-muted); font-size: 0.95rem; }
+    .status.error { color: var(--ifood-red-dark); font-weight: 600; }
+    .hidden { display: none; }
+
+    .result-headline { font-size: 0.9rem; color: var(--ink-muted); margin: 0 0 18px; }
+    .result-headline b { color: var(--ink-strong); font-size: 1.05rem; }
+
+    /* Escolha da campanha + comparativo lado a lado */
+    .campaign-row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 24px;
+      align-items: stretch;
+      margin-bottom: 24px;
+    }
+    .campaign-row > .card { margin-bottom: 0; height: 100%; }
+    @media (max-width: 960px) {
+      .campaign-row { grid-template-columns: 1fr; }
+      .campaign-row > .card { margin-bottom: 24px; }
+      .campaign-row > .card:last-child { margin-bottom: 0; }
+    }
+
+    .analytics-table tr.row-selected { background: #fff8f8; }
+    .analytics-table tr.row-selected td:first-child {
+      box-shadow: inset 3px 0 0 var(--ifood-red);
+    }
+    .analytics-placeholder {
+      padding: 32px 16px;
+      text-align: center;
+      color: var(--ink-muted);
+      font-size: 0.9rem;
+    }
+
+    #compare-chart {
+      width: 100%;
+      min-height: 300px;
+      margin-top: 20px;
+    }
+
+    #about-panel { display: none; }
+    #about-panel.open { display: block; }
+    #about-panel h3 { font-size: 1rem; margin: 20px 0 8px; color: var(--ink-strong); }
+    #about-panel p, #about-panel li { font-size: 0.92rem; color: var(--ink); }
+    #about-panel ul { padding-left: 1.2rem; }
+
+    footer {
+      max-width: 1120px;
+      margin: 0 auto;
+      padding: 16px 32px 48px;
+      color: var(--ink-muted);
+      font-size: 0.82rem;
+    }
+  </style>
+</head>
+<body>
+  <header class="brand">
+    <div>
+      <span class="wordmark">iFood</span>
+      <span class="subtitle">Simulador de Cupons &middot; onde investir o próximo real de desconto</span>
+    </div>
+    <nav>
+      <a href="#about-panel" id="about-toggle">Sobre</a>
+    </nav>
+  </header>
+
+  <main>
+    <p class="lead">
+      Este simulador mostra, para um orçamento de cupons, <strong>a quem enviar e o quanto
+      isso deve render</strong>. Ele trabalha sobre dados já coletados — ordena e conta,
+      não dispara campanha de verdade. Escolha a <strong>estratégia</strong>, marque o
+      <strong>público</strong> e clique em <strong>Gerar campanha</strong>.
+    </p>
+
+    <div class="meta-strip" id="meta-strip"></div>
+
+    <section class="card" id="about-panel">
+      <h2>Sobre o simulador</h2>
+      <p>
+        O simulador responde: <em>dado um orçamento de N cupons, a quem enviar, com qual
+        oferta e qual lógica</em> — e quanto isso deve render. Ele apenas ordena e conta
+        sobre histórico já coletado; não roda campanha ao vivo.
+      </p>
+      <h3>Como funciona</h3>
+      <ol>
+        <li>Escolha a <strong>estratégia</strong> (como priorizar clientes).</li>
+        <li>Marque os <strong>tipos de cupom</strong> e o <strong>público</strong> (quadrantes).</li>
+        <li>Clique em <strong>Gerar campanha</strong> para ver a lista, a projeção e o relatório comparativo.</li>
+      </ol>
+      <h3>Estratégias</h3>
+      <ul>
+        <li><strong>Distribuir ao acaso</strong> — manda cupom para quem calhar; é o ponto de partida.</li>
+        <li><strong>Priorizar conversão</strong> — manda para quem tem mais chance de comprar; parte talvez compraria sem cupom.</li>
+        <li><strong>Priorizar uplift</strong> — manda para quem compra <em>por causa</em> do cupom; é a proposta do modelo.</li>
+      </ul>
+      <h3>Tipos de cliente (quadrantes)</h3>
+      <p>
+        <strong>Persuadables</strong> compram por causa do cupom.
+        <strong>Sure things</strong> já compram de qualquer jeito.
+        <strong>Lost causes</strong> dificilmente convertem.
+        <strong>Sleeping dogs</strong> o cupom atrapalha. Os filtros de público restringem
+        para quais desses grupos a campanha vale — explicação detalhada em breve.
+      </p>
+      <h3>Exploração</h3>
+      <p>
+        O controle de exploração <strong>só vale para Priorizar uplift</strong>: mistura um
+        pouco de acaso na ordem para não ficar preso sempre nos mesmos clientes.
+      </p>
+      <h3>Projeção vs. comparativo</h3>
+      <p>
+        A <strong>projeção</strong> é uma estimativa para frente (efeito esperado × lucro médio).
+        O <strong>comparativo</strong> roda as três estratégias com os mesmos filtros e orçamento
+        da sua configuração — para ver qual abordagem rende mais naquela restrição.
+      </p>
+      <p class="disclaimer">
+        Avaliação offline — não é teste A/B ao vivo. “Quem viu o cupom” foi escolha do cliente,
+        não sorteio perfeito.
+      </p>
+    </section>
+
+    <div class="campaign-row">
+      <section class="card">
+        <h2>Escolha da campanha</h2>
+        <p class="hint">Atalhos rápidos ou ajuste fino nos controles abaixo.</p>
+        <div class="presets">
+          <button type="button" class="btn-preset" data-preset="aleatorio">Status quo (ao acaso)</button>
+          <button type="button" class="btn-preset" data-preset="conversao">Priorizar conversão</button>
+          <button type="button" class="btn-preset" data-preset="uplift">Priorizar uplift</button>
+        </div>
+        <div class="controls">
+          <div class="control">
+            <label class="field-label" for="strategy">Estratégia</label>
+            <select id="strategy"></select>
+            <p class="field-help" id="strategy-help"></p>
+          </div>
+          <div class="control">
+            <label class="field-label" for="budget">Orçamento — quantos cupons enviar</label>
+            <input type="number" id="budget" min="1" step="100" />
+            <p class="field-help">Número de clientes que vão receber um cupom.</p>
+          </div>
+          <div class="control">
+            <label class="field-label">Tipos de cupom liberados</label>
+            <div class="checks" id="offer-type-checks"></div>
+          </div>
+          <div class="control">
+            <label class="field-label">Público — quadrantes de cliente</label>
+            <div class="checks" id="quadrant-checks"></div>
+            <p class="field-help">Todos marcados = público inteiro. Desmarque para excluir um grupo.</p>
+          </div>
+          <div class="control" id="temperature-control">
+            <label class="field-label" for="temperature">Exploração — só para Priorizar uplift</label>
+            <input type="range" id="temperature" min="0" step="0.05" />
+            <p class="field-help" id="temperature-help"></p>
+          </div>
+        </div>
+        <div class="actions">
+          <button type="button" id="generate" class="btn-primary">Gerar campanha</button>
+          <button type="button" id="download" class="btn-secondary" disabled>Baixar campanha (CSV)</button>
+        </div>
+        <div class="notice hidden" id="notice"></div>
+      </section>
+
+      <section class="card" id="analytics-card">
+        <h2>Comparativo nesta configuração</h2>
+        <p class="hint" id="analytics-hint">
+          Ao gerar, as três estratégias rodam com os mesmos filtros e orçamento — uma linha por abordagem.
+        </p>
+        <div class="table-scroll">
+          <table class="analytics-table" id="analytics-table">
+            <thead>
+              <tr>
+                <th>Estratégia</th>
+                <th>Enviados</th>
+                <th>Conv. esperadas</th>
+                <th>Lucro projetado</th>
+                <th>Receita projetada</th>
+                <th>Desconto esperado</th>
+              </tr>
+            </thead>
+            <tbody id="analytics-body">
+              <tr><td colspan="6" class="analytics-placeholder">Clique em “Gerar campanha” para comparar.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div id="compare-chart"></div>
+        <p class="hint" style="margin-top:8px;margin-bottom:0">
+          Lucro projetado por quadrante de cliente — cada barra é uma estratégia, empilhada por tipo de público.
+        </p>
+        <p class="disclaimer" id="analytics-disclaimer"></p>
+      </section>
+    </div>
+
+    <section class="card">
+      <h2>Quem recebe o cupom</h2>
+      <p class="result-headline" id="result-headline"></p>
+      <div id="table-mount">
+        <div class="status">Carregando a base…</div>
+      </div>
+    </section>
+  </main>
+
+  <footer>
+    Avaliação offline sobre histórico — não é teste ao vivo.
+  </footer>
+
+  <script src="./assets/plotly.min.js"></script>
+  <script>
+    const PREVIEW_ROWS = 25;
+    const OFFER_TYPE_LABELS = {
+      bogo: "Compre e ganhe",
+      discount: "Desconto",
+      informational: "Só aviso (sem desconto)",
+    };
+
+    const STRATEGY_KEYS = ["aleatorio", "conversao", "uplift"];
+
+    // Paleta iFood para quadrantes no gráfico — vermelhos legíveis sobre fundo branco.
+    const QUADRANT_CHART_COLORS = {
+      persuadable: "#EA1D2C",
+      sure_thing: "#F07078",
+      lost_cause: "#E8E8E8",
+      sleeping_dog: "#8B1A26",
+    };
+
+    const state = {
+      matrix: null,
+      offers: null,
+      metadata: null,
+      offerById: new Map(),
+      lastAudience: null,
+    };
+
+    async function loadJSON(name) {
+      const res = await fetch(`./data/${name}.json`);
+      if (!res.ok) throw new Error(`Falha ao carregar ${name}.json (HTTP ${res.status})`);
+      return res.json();
+    }
+
+    function fmtInt(n) { return n.toLocaleString("pt-BR"); }
+    function fmtMoney(n) {
+      return n.toLocaleString("pt-BR", { style: "currency", currency: "BRL", maximumFractionDigits: 0 });
+    }
+    function fmtNum(n, digits = 1) {
+      return n.toLocaleString("pt-BR", { minimumFractionDigits: digits, maximumFractionDigits: digits });
+    }
+
+    function strategies() {
+      return state.metadata.strategies;
+    }
+
+    function quadrants() {
+      return state.metadata.quadrants;
+    }
+
+    function mulberry32(seed) {
+      let a = seed >>> 0;
+      return function () {
+        a |= 0; a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    }
+
+    function gumbel(rand) {
+      let u = rand();
+      if (u <= 0) u = 1e-12;
+      return -Math.log(-Math.log(u));
+    }
+
+    function hashScore(accountId, offerId, seed) {
+      let h = 2166136261 ^ seed;
+      const key = accountId + "|" + offerId;
+      for (let i = 0; i < key.length; i++) {
+        h ^= key.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      return (h >>> 0) / 4294967296;
+    }
+
+    function rowMatrixScore(strategyKey, i) {
+      const m = state.matrix;
+      const strat = strategies()[strategyKey];
+      if (strategyKey === "aleatorio") {
+        return hashScore(m.account_id[i], m.offer_id[i], state.metadata.seed);
+      }
+      const col = strategyKey === "conversao" ? "p_convert" : "score_dynamic";
+      const v = m[col][i];
+      return v === null ? null : v;
+    }
+
+    function selectedQuadrants() {
+      const boxes = document.querySelectorAll('input[name="quadrant"]:checked');
+      return new Set(Array.from(boxes).map((b) => b.value));
+    }
+
+    function selectedTypes() {
+      const boxes = document.querySelectorAll('input[name="offer-type"]:checked');
+      return new Set(Array.from(boxes).map((b) => b.value));
+    }
+
+    function allocate(strategyKey, allowedTypes, allowedQuadrants, budget, temperature) {
+      const m = state.matrix;
+      const n = m.account_id.length;
+      const effectiveTemp = strategyKey === "uplift" ? temperature : 0;
+
+      const bestByClient = new Map();
+      for (let i = 0; i < n; i++) {
+        if (!allowedTypes.has(m.offer_type[i])) continue;
+        if (!allowedQuadrants.has(m.quadrant[i])) continue;
+        const score = rowMatrixScore(strategyKey, i);
+        if (score === null) continue;
+        const acc = m.account_id[i];
+        const cur = bestByClient.get(acc);
+        if (cur === undefined || score > cur.score) {
+          bestByClient.set(acc, { idx: i, score });
+        }
+      }
+
+      const best = Array.from(bestByClient.values());
+      const eligible = best.length;
+
+      if (effectiveTemp > 0 && best.length > 0) {
+        let lo = Infinity, hi = -Infinity;
+        for (const b of best) {
+          if (b.score < lo) lo = b.score;
+          if (b.score > hi) hi = b.score;
+        }
+        const span = hi - lo + 1e-9;
+        const rand = mulberry32(state.metadata.seed);
+        for (const b of best) {
+          const norm = (b.score - lo) / span;
+          b.key = norm / effectiveTemp + gumbel(rand);
+        }
+        best.sort((a, b) => (b.key - a.key) || (a.idx - b.idx));
+      } else {
+        best.sort((a, b) => (b.score - a.score) || (a.idx - b.idx));
+      }
+
+      const chosen = best.slice(0, budget).map((b, rank) => ({
+        rank: rank + 1,
+        idx: b.idx,
+        score: b.score,
+      }));
+      return { chosen, eligible };
+    }
+
+    function computeProjection(chosen) {
+      const m = state.matrix;
+      const lucroMedio = state.metadata.lucro_medio_por_conversao_tratada;
+      const receitaMedia =
+        state.metadata.receita_media_por_conversao_tratada ?? lucroMedio;
+      const quadOrder = state.metadata.quadrant_order || Object.keys(quadrants());
+
+      let tauSum = 0;
+      let discountBudget = 0;
+      const byQuadrant = {};
+      for (const q of quadOrder) {
+        byQuadrant[q] = { lucro: 0, receita: 0, clientes: 0 };
+      }
+
+      for (const row of chosen) {
+        const i = row.idx;
+        const tau = m.uplift[i];
+        const contribTau = tau !== null ? tau : 0;
+        if (tau !== null) tauSum += tau;
+
+        const q = m.quadrant[i];
+        if (q && byQuadrant[q]) {
+          byQuadrant[q].lucro += contribTau * lucroMedio;
+          byQuadrant[q].receita += contribTau * receitaMedia;
+          byQuadrant[q].clientes += 1;
+        }
+
+        const p = m.p_convert[i];
+        if (p !== null) {
+          const offer = state.offerById.get(m.offer_id[i]);
+          if (offer) discountBudget += p * offer.discount_value;
+        }
+      }
+      return {
+        conversions: tauSum,
+        lucro: tauSum * lucroMedio,
+        receita: tauSum * receitaMedia,
+        discountBudget,
+        byQuadrant,
+      };
+    }
+
+    function showNotice(messages) {
+      const notice = document.getElementById("notice");
+      if (!messages.length) {
+        notice.className = "notice hidden";
+        notice.innerHTML = "";
+      } else {
+        notice.className = "notice";
+        notice.innerHTML = messages.join("<br>");
+      }
+    }
+
+    function updateTemperatureUI() {
+      const strat = selectedStrategy();
+      const ctrl = document.getElementById("temperature-control");
+      const isUplift = strat === "uplift";
+      ctrl.classList.toggle("disabled", !isUplift);
+      const t = readTemperature();
+      const msg = !isUplift
+        ? "Exploração só vale para Priorizar uplift — nas outras estratégias a ordem é fixa."
+        : t <= 0
+          ? "Sem acaso: sempre os melhores da estratégia."
+          : "Um pouco de acaso: dá chance a quem está logo abaixo do corte.";
+      document.getElementById("temperature-help").textContent = msg;
+    }
+
+    function renderMeta() {
+      const { metadata, offers } = state;
+      const nOfferTypes = new Set(offers.map((o) => o.offer_type)).size;
+      const metrics = [
+        { value: fmtInt(metadata.n_clients), label: "clientes na base" },
+        { value: fmtInt(offers.length), label: "ofertas no catálogo" },
+        { value: fmtInt(nOfferTypes), label: "tipos de campanha" },
+        { value: fmtInt(metadata.n_holdout_rows || 0), label: "linhas de validação" },
+      ];
+      document.getElementById("meta-strip").innerHTML = metrics
+        .map((m) => `<div class="metric"><div class="value">${m.value}</div><div class="label">${m.label}</div></div>`)
+        .join("");
+    }
+
+    function offerTypesInCatalog() {
+      const order = ["bogo", "discount", "informational"];
+      const present = new Set(state.offers.map((o) => o.offer_type));
+      return order.filter((t) => present.has(t));
+    }
+
+    function renderOfferTypeChecks() {
+      const html = offerTypesInCatalog()
+        .map((t) => {
+          const checked = t === "informational" ? "" : "checked";
+          return `<label class="check"><input type="checkbox" name="offer-type" value="${t}" ${checked} />${OFFER_TYPE_LABELS[t]}</label>`;
+        })
+        .join("");
+      document.getElementById("offer-type-checks").innerHTML = html;
+    }
+
+    function renderQuadrantChecks() {
+      const order = state.metadata.quadrant_order || Object.keys(quadrants());
+      const html = order
+        .map((key) => {
+          const q = quadrants()[key];
+          return (
+            `<label class="check">` +
+            `<input type="checkbox" name="quadrant" value="${key}" checked />` +
+            `<span class="check-label">${q.label}<span class="check-sub">${q.help}</span></span>` +
+            `</label>`
+          );
+        })
+        .join("");
+      document.getElementById("quadrant-checks").innerHTML = html;
+    }
+
+    function renderStrategySelect() {
+      const sel = document.getElementById("strategy");
+      sel.innerHTML = STRATEGY_KEYS
+        .map((key) => `<option value="${key}">${strategies()[key].label}</option>`)
+        .join("");
+      sel.value = "uplift";
+      updateStrategyHelp();
+    }
+
+    function selectedStrategy() {
+      return document.getElementById("strategy").value;
+    }
+
+    function updateStrategyHelp() {
+      document.getElementById("strategy-help").textContent = strategies()[selectedStrategy()].help;
+      updateTemperatureUI();
+    }
+
+    function readTemperature() {
+      const t = parseFloat(document.getElementById("temperature").value);
+      return Number.isFinite(t) ? t : 0;
+    }
+
+    function applyPreset(key) {
+      document.getElementById("strategy").value = key;
+      document.getElementById("temperature").value = 0;
+      document.querySelectorAll('input[name="quadrant"]').forEach((b) => { b.checked = true; });
+      updateStrategyHelp();
+    }
+
+    function runAllStrategies(allowedTypes, allowedQuadrants, budget, temperature) {
+      const out = {};
+      for (const key of STRATEGY_KEYS) {
+        const { chosen, eligible } = allocate(key, allowedTypes, allowedQuadrants, budget, temperature);
+        out[key] = { chosen, eligible, projection: computeProjection(chosen) };
+      }
+      return out;
+    }
+
+    function renderCompare(allRuns, selectedKey, budget) {
+      document.getElementById("analytics-hint").textContent =
+        `Orçamento de ${fmtInt(budget)} cupons, mesmos filtros de cupom e público — ` +
+        `cada linha é o resultado de rodar aquela estratégia.`;
+      document.getElementById("analytics-disclaimer").textContent =
+        state.metadata.projection_disclaimer;
+
+      const stratClass = {
+        aleatorio: "strat-aleatorio",
+        conversao: "strat-conversao",
+        uplift: "strat-uplift",
+      };
+      let body = "";
+      for (const key of STRATEGY_KEYS) {
+        const run = allRuns[key];
+        const proj = run.projection;
+        const label = strategies()[key].label;
+        const selected = key === selectedKey ? "row-selected" : "";
+        const suffix = key === selectedKey ? " ★" : "";
+        body +=
+          `<tr class="${selected}">` +
+          `<td class="${stratClass[key]}">${label}${suffix}</td>` +
+          `<td class="num">${fmtInt(run.chosen.length)}</td>` +
+          `<td class="num">${fmtNum(proj.conversions, 1)}</td>` +
+          `<td class="num">${fmtMoney(proj.lucro)}</td>` +
+          `<td class="num">${fmtMoney(proj.receita)}</td>` +
+          `<td class="num">${fmtMoney(proj.discountBudget)}</td>` +
+          `</tr>`;
+      }
+      document.getElementById("analytics-body").innerHTML = body;
+      renderCompareChart(allRuns);
+    }
+
+    function renderCompareChart(allRuns) {
+      const quadOrder = state.metadata.quadrant_order || Object.keys(quadrants());
+      const stratLabels = STRATEGY_KEYS.map((k) => strategies()[k].label);
+
+      const traces = quadOrder.map((q) => ({
+        type: "bar",
+        name: quadrants()[q].label,
+        x: stratLabels,
+        y: STRATEGY_KEYS.map((k) => allRuns[k].projection.byQuadrant[q]?.lucro ?? 0),
+        marker: {
+          color: QUADRANT_CHART_COLORS[q] || "#EA1D2C",
+          line: q === "lost_cause" ? { color: "#C9C9C9", width: 1 } : { width: 0 },
+        },
+        hovertemplate:
+          "%{fullData.name}<br>%{x}<br>R$ %{y:,.0f}<extra></extra>",
+      }));
+
+      const layout = {
+        barmode: "stack",
+        paper_bgcolor: "#ffffff",
+        plot_bgcolor: "#ffffff",
+        font: {
+          family: "Inter, Helvetica, Arial, sans-serif",
+          size: 12,
+          color: "#3e3e3e",
+        },
+        margin: { t: 12, r: 12, b: 8, l: 52 },
+        xaxis: {
+          tickfont: { size: 11 },
+          linecolor: "#EAEAEA",
+          tickcolor: "#EAEAEA",
+        },
+        yaxis: {
+          title: { text: "Lucro projetado (R$)", font: { size: 11, color: "#717171" } },
+          tickformat: ",.0f",
+          gridcolor: "#F0F0F0",
+          zerolinecolor: "#EAEAEA",
+          linecolor: "#EAEAEA",
+        },
+        legend: {
+          orientation: "h",
+          y: 1.12,
+          x: 0,
+          font: { size: 11 },
+          bgcolor: "rgba(255,255,255,0)",
+        },
+        bargap: 0.28,
+      };
+
+      Plotly.newPlot("compare-chart", traces, layout, {
+        responsive: true,
+        displayModeBar: false,
+      });
+    }
+
+    function renderResult() {
+      const strategyKey = selectedStrategy();
+      const allowed = selectedTypes();
+      let quads = selectedQuadrants();
+      const temperature = readTemperature();
+      const budget = Math.max(1, parseInt(document.getElementById("budget").value, 10) || 1);
+      const messages = [];
+
+      if (allowed.size === 0) {
+        showNotice(["Selecione ao menos um tipo de cupom."]);
+        return;
+      }
+      if (quads.size === 0) {
+        showNotice(["Selecione ao menos um quadrante de público."]);
+        return;
+      }
+
+      if (strategyKey !== "aleatorio" && allowed.has("informational")) {
+        messages.push(
+          "“Só aviso (sem desconto)” fica fora desta estratégia — disponível apenas em Distribuir ao acaso."
+        );
+      }
+      showNotice(messages);
+
+      const allRuns = runAllStrategies(allowed, quads, budget, temperature);
+      const { chosen, eligible } = allRuns[strategyKey];
+      const m = state.matrix;
+
+      const headline = document.getElementById("result-headline");
+      if (eligible < budget) {
+        headline.innerHTML =
+          `Público esgotado: só <b>${fmtInt(eligible)}</b> clientes se encaixam nos filtros, ` +
+          `abaixo do orçamento de ${fmtInt(budget)}. Enviando para todos os ${fmtInt(eligible)}.`;
+      } else {
+        headline.innerHTML =
+          `Selecionados <b>${fmtInt(chosen.length)}</b> clientes de ${fmtInt(eligible)} elegíveis.`;
+      }
+
+      const rows = Math.min(PREVIEW_ROWS, chosen.length);
+      let body = "";
+      for (let r = 0; r < rows; r++) {
+        const row = chosen[r];
+        const i = row.idx;
+        const type = m.offer_type[i];
+        body +=
+          `<tr>` +
+          `<td>${row.rank}</td>` +
+          `<td class="mono">${m.account_id[i].slice(0, 10)}…</td>` +
+          `<td class="mono">${m.offer_id[i].slice(0, 10)}…</td>` +
+          `<td><span class="pill ${type}">${OFFER_TYPE_LABELS[type]}</span></td>` +
+          `<td class="num">${fmtNum(row.score, 3)}</td>` +
+          `</tr>`;
+      }
+      document.getElementById("table-mount").innerHTML =
+        `<div class="table-scroll"><table>` +
+        `<thead><tr><th>#</th><th>Cliente</th><th>Cupom</th><th>Tipo</th><th>Prioridade</th></tr></thead>` +
+        `<tbody>${body}</tbody></table></div>` +
+        `<p class="hint" style="margin-top:14px;margin-bottom:0">` +
+        `Mostrando os ${fmtInt(rows)} primeiros de ${fmtInt(chosen.length)}.</p>`;
+
+      const audience = chosen.map((row) => ({
+        rank: row.rank,
+        account_id: m.account_id[row.idx],
+        offer_id: m.offer_id[row.idx],
+        offer_type: m.offer_type[row.idx],
+        score: row.score,
+      }));
+      state.lastAudience = audience;
+
+      renderCompare(allRuns, strategyKey, budget);
+
+      document.getElementById("download").disabled = chosen.length === 0;
+    }
+
+    function downloadCSV() {
+      if (!state.lastAudience || !state.lastAudience.length) return;
+      const cols = ["rank", "account_id", "offer_id", "offer_type", "score"];
+      const header = cols.join(",");
+      const lines = state.lastAudience.map((row) =>
+        cols.map((c) => {
+          const v = row[c];
+          return typeof v === "string" && v.includes(",") ? `"${v}"` : v;
+        }).join(",")
+      );
+      const blob = new Blob([header + "\n" + lines.join("\n") + "\n"], { type: "text/csv;charset=utf-8" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "campanha.csv";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    }
+
+    function wireControls() {
+      document.getElementById("budget").value = state.metadata.default_budget;
+      const temp = document.getElementById("temperature");
+      temp.max = state.metadata.temperature_max;
+      temp.value = state.metadata.temperature_default;
+
+      document.getElementById("strategy").addEventListener("change", updateStrategyHelp);
+      temp.addEventListener("input", updateTemperatureUI);
+      document.getElementById("generate").addEventListener("click", renderResult);
+      document.getElementById("download").addEventListener("click", downloadCSV);
+
+      document.querySelectorAll(".btn-preset").forEach((btn) => {
+        btn.addEventListener("click", () => applyPreset(btn.dataset.preset));
+      });
+
+      document.getElementById("about-toggle").addEventListener("click", (e) => {
+        e.preventDefault();
+        document.getElementById("about-panel").classList.toggle("open");
+      });
+    }
+
+    (async function init() {
+      try {
+        const [metadata, offers, matrix] = await Promise.all([
+          loadJSON("metadata"),
+          loadJSON("offers"),
+          loadJSON("matrix"),
+        ]);
+        state.metadata = metadata;
+        state.offers = offers;
+        state.matrix = matrix;
+        state.offerById = new Map(offers.map((o) => [o.offer_id, o]));
+
+        renderMeta();
+        renderStrategySelect();
+        renderOfferTypeChecks();
+        renderQuadrantChecks();
+        wireControls();
+        updateTemperatureUI();
+        document.getElementById("table-mount").innerHTML =
+          `<div class="status">Ajuste os controles e clique em “Gerar campanha”.</div>`;
+      } catch (err) {
+        document.getElementById("table-mount").innerHTML =
+          `<div class="status error">${err.message}</div>`;
+        console.error(err);
+      }
+    })();
+  </script>
+</body>
+</html>

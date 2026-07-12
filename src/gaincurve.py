@@ -97,9 +97,7 @@ from __future__ import annotations
 
 import numpy as np
 import pandas as pd
-import plotly.graph_objects as go
 
-from src import uplift, viz
 from src.config import PipelineConfig
 
 TREATMENT_COLUMN = "treatment"
@@ -360,24 +358,6 @@ def best_lambda_by_decile(
     })
 
 
-def fig_best_lambda_by_decile(best: pd.DataFrame, theme: str = "light") -> go.Figure:
-    """λ ótimo por decil de budget (`best_lambda_by_decile`), em barras.
-
-    Barras de altura constante = um λ fixo já é ótimo em todo budget; barras que
-    sobem ou descem = o λ ideal depende do budget, e um peso dinâmico tem espaço.
-    """
-    fig = viz.figure(
-        "λ ótimo por decil de budget: dinamizar λ tem potencial?",
-        "Para cada corte top-N%, o λ do híbrido fixo que maximiza o lucro incremental. Variação = espaço para λ dinâmico.",
-        theme=theme,
-    )
-    fig.add_trace(go.Bar(
-        x=[f"D{d}" for d in best["decil"]], y=best["melhor_lambda"],
-        marker_color=viz.palette(theme)[0],
-    ))
-    return viz.add_bar_labels(fig, template="%{y:.2f}", theme=theme)
-
-
 def dynamic_lambda_by_budget(
     uncertainty: pd.Series,
     uplift_pred: pd.Series,
@@ -405,23 +385,6 @@ def dynamic_lambda_by_budget(
             "lambda_medio": media_acumulada,
         }))
     return pd.concat(partes, ignore_index=True)
-
-
-def fig_dynamic_lambda_by_budget(evolucao: pd.DataFrame, theme: str = "light") -> go.Figure:
-    """λ_local médio acumulado por budget, uma série por γ (`dynamic_lambda_by_budget`)."""
-    fig = viz.figure(
-        "Peso do híbrido dinâmico ao longo do budget",
-        "λ_local médio acumulado nos top-N, por γ.",
-        theme=theme,
-    )
-    cores = viz.palette(theme)
-    for i, (gamma, grupo) in enumerate(evolucao.groupby("gamma")):
-        cor = cores[i % len(cores)]
-        fig.add_trace(go.Scatter(
-            x=grupo["n"], y=grupo["lambda_medio"], name=f"γ={gamma}",
-            mode="lines", line=dict(color=cor, width=2.5),
-        ))
-    return viz.add_end_labels(fig, theme=theme)
 
 
 def random_ranking(holdout_df: pd.DataFrame, cfg: PipelineConfig) -> np.ndarray:
@@ -554,60 +517,4 @@ def gain_at_budget(curves: pd.DataFrame, budget: int) -> pd.DataFrame:
     cortadas = curves[curves["n"] <= budget]
     return (
         cortadas.sort_values("n").groupby("strategy", as_index=False).last()
-    )
-
-
-def _fig_metric_curves(
-    curves: pd.DataFrame,
-    metric: str,
-    title: str,
-    subtitle: str,
-    theme: str = "light",
-) -> go.Figure:
-    """Curvas de uma métrica (`gain` ou `conversions`) por budget, uma série por
-    estratégia. Só a linha central — sem banda de IC (2026-07-10): com o grid de
-    λ do híbrido ao lado das demais estratégias, várias séries sobrepostas com
-    banda sombreada ficam ilegíveis. O IC bootstrap continua disponível nas
-    colunas `_lo`/`_hi` de `curves` (saída de `gain_curves_with_ci`) para leitura
-    tabular (`gain_at_budget`), só não é mais desenhado aqui.
-    """
-    fig = viz.figure(title, subtitle, theme=theme)
-    cores = viz.palette(theme)
-    for i, (nome, grupo) in enumerate(curves.groupby("strategy")):
-        cor = cores[i % len(cores)]
-        fig.add_trace(go.Scatter(
-            x=grupo["n"], y=grupo[metric], name=nome,
-            mode="lines", line=dict(color=cor, width=2.5),
-        ))
-    return viz.add_end_labels(fig, theme=theme)
-
-
-def fig_gain_curves(curves: pd.DataFrame, theme: str = "light") -> go.Figure:
-    """Curvas de lucro líquido incremental por budget, uma série por estratégia.
-
-    Rótulo direto no fim de cada série (a paleta validada não deixa a cor
-    sozinha carregar identidade — ver `src/viz.py`). A estratégia que domina é a
-    de curva mais alta: mais lucro incremental para o mesmo budget. Sem banda de
-    IC (ver `_fig_metric_curves`) — os limites ainda saem em `gain_at_budget`.
-    """
-    return _fig_metric_curves(
-        curves, "gain",
-        "Lucro incremental por budget: quem escolher primeiro rende mais",
-        "Lucro líquido incremental (R$, contrafactual observado) dos top-N de cada estratégia.",
-        theme=theme,
-    )
-
-
-def fig_conversion_curves(curves: pd.DataFrame, theme: str = "light") -> go.Figure:
-    """Curvas de conversões incrementais por budget, uma série por estratégia.
-
-    Mesma leitura de `fig_gain_curves`, mas em unidade de clientes convertidos
-    a mais (não R$): "quantas conversões a política de fato causa", separado
-    de quanto lucro isso rende. Sem banda de IC (ver `_fig_metric_curves`).
-    """
-    return _fig_metric_curves(
-        curves, "conversions",
-        "Conversões incrementais por budget",
-        "Conversões causadas pela oferta (contrafactual observado) nos top-N de cada estratégia.",
-        theme=theme,
     )
