@@ -1,7 +1,7 @@
 [project]
-name = "ifood-coupons-attribution"
+name = "ifood-coupons-uplift"
 version = "0.1.0"
-description = "Add your description here"
+description = "Coupon uplift modeling — pipeline, X-learner, and allocation simulator"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [

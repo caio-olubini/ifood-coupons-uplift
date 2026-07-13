@@ -1,0 +1,51 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 300" role="img" aria-label="Simulator preview">
+  <defs>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="4" stdDeviation="8" flood-color="#00000018"/>
+    </filter>
+  </defs>
+  <rect width="880" height="300" rx="16" fill="#f7f7f7" stroke="#eaeaea"/>
+
+  <!-- browser chrome -->
+  <rect x="40" y="24" width="800" height="252" rx="12" fill="#fff" stroke="#eaeaea" filter="url(#shadow)"/>
+  <rect x="40" y="24" width="800" height="36" rx="12" fill="#3e3e3e"/>
+  <rect x="40" y="48" width="800" height="12" fill="#3e3e3e"/>
+  <circle cx="64" cy="42" r="6" fill="#ff5f57"/>
+  <circle cx="84" cy="42" r="6" fill="#febc2e"/>
+  <circle cx="104" cy="42" r="6" fill="#28c840"/>
+
+  <!-- header -->
+  <rect x="40" y="60" width="800" height="44" fill="#ea1d2c"/>
+  <text x="64" y="88" font-family="Inter,Segoe UI,sans-serif" font-size="16" font-weight="800" fill="#fff">Coupon Allocation Simulator</text>
+  <text x="720" y="88" text-anchor="end" font-family="Inter,Segoe UI,sans-serif" font-size="11" fill="#ffffffcc">live demo</text>
+
+  <!-- controls -->
+  <g font-family="Inter,Segoe UI,sans-serif">
+    <rect x="64" y="124" width="180" height="36" rx="8" fill="#f7f7f7" stroke="#eaeaea"/>
+    <text x="76" y="146" font-size="11" fill="#717171">Budget</text>
+    <text x="220" y="146" text-anchor="end" font-size="13" font-weight="700" fill="#1a1a1a">15,000</text>
+
+    <rect x="260" y="124" width="180" height="36" rx="8" fill="#f7f7f7" stroke="#eaeaea"/>
+    <text x="272" y="146" font-size="11" fill="#717171">Strategy</text>
+    <text x="416" y="146" text-anchor="end" font-size="13" font-weight="700" fill="#2d6a4f">Uplift blend</text>
+
+    <rect x="456" y="124" width="120" height="36" rx="8" fill="#ea1d2c"/>
+    <text x="516" y="147" text-anchor="middle" font-size="13" font-weight="700" fill="#fff">Generate</text>
+  </g>
+
+  <!-- strategy cards -->
+  <g font-family="Inter,Segoe UI,sans-serif">
+    <rect x="64" y="180" width="220" height="76" rx="10" fill="#f7f7f7" stroke="#eaeaea"/>
+    <text x="80" y="204" font-size="12" fill="#717171">Random</text>
+    <text x="80" y="232" font-size="20" font-weight="700" fill="#6c757d">R$ 25,934</text>
+
+    <rect x="300" y="180" width="220" height="76" rx="10" fill="#fff8e8" stroke="#eda100"/>
+    <text x="316" y="204" font-size="12" fill="#717171">Raw conversion</text>
+    <text x="316" y="232" font-size="20" font-weight="700" fill="#b08900">R$ 23,929</text>
+
+    <rect x="536" y="180" width="220" height="76" rx="10" fill="#edf7f1" stroke="#2d6a4f" stroke-width="2"/>
+    <text x="552" y="204" font-size="12" fill="#717171">Blend ³=1.0</text>
+    <text x="552" y="232" font-size="20" font-weight="700" fill="#2d6a4f">R$ 32,079</text>
+    <text x="736" y="232" text-anchor="end" font-size="11" font-weight="700" fill="#2d6a4f">+24%</text>
+  </g>
+</svg>

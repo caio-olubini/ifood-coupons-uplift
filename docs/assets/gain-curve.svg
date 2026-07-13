@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 880 420" role="img" aria-label="Incremental profit by budget on holdout">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#ffffff"/>
+      <stop offset="100%" stop-color="#f7f7f7"/>
+    </linearGradient>
+    <filter id="shadow" x="-2%" y="-2%" width="104%" height="108%">
+      <feDropShadow dx="0" dy="2" stdDeviation="6" flood-color="#00000014"/>
+    </filter>
+  </defs>
+  <rect width="880" height="420" rx="16" fill="url(#bg)" stroke="#eaeaea"/>
+  <text x="40" y="42" font-family="Inter,Segoe UI,Helvetica,Arial,sans-serif" font-size="22" font-weight="700" fill="#1a1a1a">Incremental net profit (R$)  holdout</text>
+  <text x="40" y="68" font-family="Inter,Segoe UI,Helvetica,Arial,sans-serif" font-size="14" fill="#717171">20,412 sends · three ranking strategies · observed counterfactual</text>
+
+  <!-- grid -->
+  <g stroke="#eaeaea" stroke-width="1">
+    <line x1="90" y1="320" x2="840" y2="320"/>
+    <line x1="90" y1="270" x2="840" y2="270"/>
+    <line x1="90" y1="220" x2="840" y2="220"/>
+    <line x1="90" y1="170" x2="840" y2="170"/>
+    <line x1="90" y1="120" x2="840" y2="120"/>
+    <line x1="90" y1="90" x2="840" y2="90"/>
+  </g>
+  <g font-family="Inter,Segoe UI,Helvetica,Arial,sans-serif" font-size="12" fill="#717171">
+    <text x="56" y="324" text-anchor="end">0</text>
+    <text x="56" y="274" text-anchor="end">8k</text>
+    <text x="56" y="224" text-anchor="end">16k</text>
+    <text x="56" y="174" text-anchor="end">24k</text>
+    <text x="56" y="124" text-anchor="end">32k</text>
+    <text x="220" y="350" text-anchor="middle">1k</text>
+    <text x="400" y="350" text-anchor="middle">5k</text>
+    <text x="580" y="350" text-anchor="middle">10k</text>
+    <text x="760" y="350" text-anchor="middle">15k</text>
+    <text x="465" y="385" text-anchor="middle" font-size="13" fill="#3e3e3e">Budget (coupons sent)</text>
+  </g>
+
+  <!-- lines: y scale 0-34000 maps to 320-90 -->
+  <!-- random -->
+  <polyline fill="none" stroke="#6c757d" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+    points="220,305 400,229 580,153 760,97"/>
+  <!-- conversion -->
+  <polyline fill="none" stroke="#eda100" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"
+    points="220,282 400,233 580,170 760,138"/>
+  <!-- blend -->
+  <polyline fill="none" stroke="#2d6a4f" stroke-width="4" stroke-linecap="round" stroke-linejoin="round"
+    points="220,293 400,221 580,138 760,90"/>
+
+  <!-- highlight 15k -->
+  <rect x="700" y="78" width="150" height="72" rx="10" fill="#ffffff" stroke="#2d6a4f" stroke-width="2" filter="url(#shadow)"/>
+  <text x="775" y="102" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="13" font-weight="700" fill="#2d6a4f">R$ 32,079</text>
+  <text x="775" y="122" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="11" fill="#717171">+24% vs random</text>
+  <text x="775" y="138" text-anchor="middle" font-family="Inter,Segoe UI,sans-serif" font-size="11" fill="#717171">+34% vs conversion</text>
+
+  <!-- legend -->
+  <g font-family="Inter,Segoe UI,sans-serif" font-size="13">
+    <line x1="560" y1="42" x2="590" y2="42" stroke="#2d6a4f" stroke-width="4" stroke-linecap="round"/>
+    <text x="598" y="46" fill="#3e3e3e">Blend ³=1.0</text>
+    <line x1="690" y1="42" x2="720" y2="42" stroke="#eda100" stroke-width="3" stroke-linecap="round"/>
+    <text x="728" y="46" fill="#3e3e3e">Raw conversion</text>
+    <line x1="560" y1="68" x2="590" y2="68" stroke="#6c757d" stroke-width="3" stroke-linecap="round"/>
+    <text x="598" y="72" fill="#3e3e3e">Random</text>
+  </g>
+</svg>

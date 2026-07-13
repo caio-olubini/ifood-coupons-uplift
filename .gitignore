@@ -1,17 +1,31 @@
-# Python-generated files
+# Python
 __pycache__/
 *.py[oc]
+*.egg-info/
 build/
 dist/
 wheels/
-*.egg-info
+.pytest_cache/
+.ipynb_checkpoints/
 
 # Virtual environments
-.venv
+.venv/
 
-# Dataset processado (artefato derivado, reproduzível pelo pipeline)
+# IDE & AI tooling (local dev only)
+.vscode/
+.cursor/
+.claude/
+
+# Internal docs (local dev only)
+CLAUDE.md
+Case_Técnico_Data_Science_-_iFood.pdf
+
+# Derived artifacts (reproducible via pipeline / train / export)
 data/processed/
+models/*
+!models/.gitkeep
+!models/blended_uplift_model.pkl
 
-# Tracking local de experimentos (MLflow) — artefato derivado, não versionado
+# MLflow local tracking
 mlruns/
 mlflow.db

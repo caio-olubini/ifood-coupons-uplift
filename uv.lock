@@ -1075,7 +1075,7 @@ wheels = [
 ]
 
 [[package]]
-name = "ifood-coupons-attribution"
+name = "ifood-coupons-uplift"
 version = "0.1.0"
 source = { editable = "." }
 dependencies = [
