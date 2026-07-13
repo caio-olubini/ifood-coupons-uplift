@@ -1,176 +1,109 @@
 # iFood Coupons Uplift
 
-Decide **which offer to send (or not send)** to each customer to maximize net
-profit, and prove the gain through offline evaluation — no live A/B. The problem
-is **incrementality (uplift)**, not completion classification: sending a coupon
-to someone who would have bought anyway costs margin without adding revenue.
+A data-driven system for **coupon allocation**: given a budget of N offers, decide
+**who to target and which offer to send** to maximize incremental profit — not just
+who is likely to convert.
 
-Everything runs locally (no cloud / Databricks) on **PySpark local**, managed by
-**UV**. Read the specs in `specification/` before touching the pipeline — they
-are the source of truth, not this file.
+The core problem is **uplift** (incremental treatment effect), not conversion
+classification. Sending a coupon to someone who would have bought anyway burns
+margin without adding revenue. The solution estimates who the offer actually
+*moves*, ranks customers by expected incremental gain, and evaluates strategies
+offline — without a live A/B test.
 
----
+**Modeling stack:** X-learner meta-learner (CausalML) per offer type, a predictive
+conversion prior (LGBM), and a production **BlendedUpliftModel** that combines
+causal uplift with conversion probability — fixed λ blending and a dynamic variant
+weighted by CATE estimation uncertainty. Offline evaluation uses Qini/AUUC ranking
+metrics and an incremental gain curve per budget (top-N).
 
-## CLI commands
+Everything runs **locally** (no cloud, no Databricks): PySpark local for data
+processing, UV for dependency management, and a static browser simulator for
+interactive exploration.
 
-### Setup
+## Results (holdout)
 
-```bash
-uv sync                        # install deps (includes the dev group)
-```
+Evaluated on **20,412 holdout sends** (bogo + discount) the model never trained on.
+Production strategy: **BlendedUpliftModel** with dynamic λ (γ = 1.0) — X-learner
+uplift blended with conversion probability, weighted by CATE estimation uncertainty.
 
-### Data pipeline — raw → processed
+**Incremental net profit (R$)** — same customers, same observed outcomes, different
+ranking strategies:
 
-```bash
-uv run coupons-uplift pipeline                    # raw JSONs → data/processed/ (validates the contract before writing)
-uv run coupons-uplift pipeline --config other.yaml
-```
+| Budget (top-N) | Random | Raw conversion | **Blend γ = 1.0** |
+|---:|---:|---:|---:|
+| 1,000 | 1,557 | **4,010** | 2,814 |
+| 5,000 | 9,667 | 10,983 | **12,036** |
+| 10,000 | 17,820 | 19,613 | **24,244** |
+| 15,000 | 25,934 | 23,929 | **32,079** |
 
-Reads the 3 raw JSONs, runs the full staged transform (parse → clean →
-attribution → label → features → cost → contract), validates against
-`specification/schema-processed.md`, and writes the partitioned Parquet.
+At **15,000 coupons** — a realistic campaign budget — the winning strategy delivers
+**R$ 32,079** in incremental profit: **+24% vs random** (+R$ 6,145) and **+34% vs
+ranking by raw conversion** (+R$ 8,150). Raw conversion leads only at very small
+budgets (top-1,000), where high-spend users dominate; as the list widens, uplift
+ranking stays stable and pulls ahead.
 
-### Product CLI — train / predict
-
-```bash
-uv run coupons-uplift train                       # fit BlendedUpliftModel on the training split, serialize into models_dir
-uv run coupons-uplift predict --budget 5000       # recommend the top-N actions (one offer per customer)
-uv run coupons-uplift predict --out recs.csv      # write the CSV instead of printing
-```
-
-### Simulator export
-
-```bash
-uv run coupons-uplift export                      # freeze simulator/data/ JSON artifacts
-```
-
-- **`train`** fits the `BlendedUpliftModel` from the config on the training side
-  of the temporal split (no `informational`) and serializes it into
-  `cfg.models_dir` — same data prep as the notebook, no new numbers.
-- **`predict`** is **real serving, not prediction over the historical base**: it
-  builds the scoring matrix **customers × active offers**, scores it with the
-  saved model, and returns the top-N actions. It applies **one offer per
-  customer** (best offer per `account_id`), then top-N by budget
-  (`cfg.predict_budget` / `--budget`).
-
-### Tests
-
-```bash
-uv run pytest -q                          # full integrity suite (~36 tests)
-uv run pytest tests/test_leakage.py -q    # a single file
-```
-
-### Notebooks (end-to-end)
-
-```bash
-uv run python -c "import nbformat; from nbclient import NotebookClient; \
-nb=nbformat.read('notebooks/2_modeling.ipynb',as_version=4); \
-NotebookClient(nb,timeout=5400,kernel_name='python3',resources={'metadata':{'path':'.'}}).execute()"
-```
+Causal ranking quality (Qini / AUUC): **0.069 / 0.073** for the blend — vs 0.034 /
+0.040 for uplift alone, 0.009 / −0.006 for raw conversion, and −0.012 / −0.012
+for random. A placebo permutation test (20 runs) confirms the signal is real
+(p = 0/20).
 
 ---
 
-## Where each artifact lives
+## Highlights
 
-| Path | What it is |
+### Coupon Allocation Simulator
+
+**Live demo:** [https://caio-olubini.github.io/ifood-coupons-uplift/](https://caio-olubini.github.io/ifood-coupons-uplift/)
+
+Interactive UI to explore allocation under a budget: who receives which offer,
+projected return, and side-by-side comparison of ranking strategies. No backend
+at runtime — scores and holdout analytics are pre-computed offline and shipped as
+JSON. See [`simulator/README.md`](simulator/README.md) for details.
+
+### Notebooks
+
+All notebooks import from `src/` and display results — no transformation logic
+lives in the notebook cells.
+
+| Notebook | What it covers |
 |---|---|
-| `config.yaml` | Every behavior parameter of the pipeline & modeling (REQ-110). Nothing is hardcoded in `src/`. |
-| `data/raw/` | The 3 input JSONs: `offers.json`, `profile.json`, `transactions.json`. |
-| `data/processed/` | Output of `coupons-uplift pipeline` — partitioned Parquet at grain `(account_id, offer_id, received_time)`. The contract between pipeline and modeling. |
-| `models/` | Serialized fitted model (`blended_uplift_model.pkl`) — where `coupons-uplift train` writes and `coupons-uplift predict` reads. |
-| `mlflow.db` | Local SQLite MLflow tracking store (no server). |
-| `src/` | All logic — pure, testable functions. Notebooks only import from here and display. |
-| `tests/` | ~36 structural integrity tests (guarantees G1–G10, REQ-2xx, boundary invariants). |
-| `notebooks/1_eda.ipynb` | Deliverable EDA: overview, events over time, quality, distributions, correlation, funnel, segmentation, causal diagnostics. |
-| `notebooks/2_modeling.ipynb` | Full modeling run over real data: split, baselines, X-learner, Qini/AUUC, blends, gain curve. |
-| `specification/` | Source of truth. `schema-processed.md` is the contract; `spec.md`, `tasks.md`, `00-clarify.md`, `02-modeling/`. |
+| [`notebooks/1_data_processing.ipynb`](notebooks/1_data_processing.ipynb) | Step-by-step pipeline audit: each `src/` stage in sequence, intermediate state, and structural guarantees (G1–G10) on real data. |
+| [`notebooks/1_1_exploratory_analysis.ipynb`](notebooks/1_1_exploratory_analysis.ipynb) | Exploratory analysis: event timeline, data quality, distributions, correlation, response funnel, covariate balance, causal diagnostics. |
+| [`notebooks/1_2_clustering.ipynb`](notebooks/1_2_clustering.ipynb) | Customer segmentation (K-Means) → business personas; response by segment. Descriptive only — never a model feature. |
+| [`notebooks/2_modeling.ipynb`](notebooks/2_modeling.ipynb) | Full modeling run: temporal split, predictive baseline, X-learner, Qini/AUUC + placebo test, blend study, incremental gain curve by budget, quadrant analysis, feature importance. |
 
-### `src/` modules
-
-**Pipeline (raw → processed):**
-
-| Module | Role |
-|---|---|
-| `config.py` | `PipelineConfig` (Pydantic) loaded from `config.yaml`. `load(config_path=..., **overrides)`. |
-| `io.py` | Reads the 3 JSONs; `parse_events` unpacks `value` and coalesces `offer id`/`offer_id` into a single `offer_ref`. |
-| `clean.py` | `normalize_profile`: `age=118` sentinel → `identity_missing`, missing `gender` → `unknown`, `tenure_days`. |
-| `attribution.py` | `attribute` (grain, validity window, `min_value` filter, overlap resolution), `build_label` (influence-aware `converted`/`conversion_value`), `add_recurrence_flag`. |
-| `features.py` | `build`: leakage-free `hist_*` features + offer/context features. |
-| `cost.py` | `add_reward_cost`: discount cost on real conversions only. |
-| `contract.py` | Executable contract: `StructType` + Pydantic from one `_COLUMNS` list. `enforce_schema`, `assert_schema`, guards. |
-| `pipeline.py` | Orchestrates raw→processed: `assemble_processed`, `validate`, `run`, `build_spark`, CLI entrypoint. |
-
-**Modeling & serving:**
-
-| Module | Role |
-|---|---|
-| `split.py` | Temporal split by `campaign_wave`; `exclude_informational`; `MODELED_OFFER_TYPES`. |
-| `model_baseline.py` | Predictive baseline (logistic + LGBM) with MLflow tracking. |
-| `uplift.py` | X-learner per `offer_type` (fixed propensity), CATE uncertainty, causal importance. |
-| `uplift_eval.py` | Qini/AUUC (via `sklift`), placebo test, importance figures. |
-| `gaincurve.py` | Offline eval: incremental gain curve per budget top-N; hybrid/dynamic blend scoring; bootstrap CIs. |
-| `models.py` | Model wrappers: `UpliftModel`, `ConversionModel`, `BlendedUpliftModel` (production model). `from_config`, `save`/`load`, `feature_importance`. |
-| `serve.py` | `build_scoring_frame` (customers × active offers), `recommend` (one offer/customer + top-N by budget). |
-| `cli.py` | `train`/`predict` implementations — orchestrates `models` + `serve` + `split`. |
-| `main.py` | Unified CLI entry point (`coupons-uplift` script). |
-| `quadrant.py` | Uplift-quadrant classification, gain-by-quadrant, recurrence-by-quadrant. |
-| `tracking.py` | MLflow experiment tracking. |
-| `eda.py` | EDA / covariate balance / K-Means segmentation functions (Spark → small pandas + figures). |
-| `viz.py` | Single executive Plotly theme (validated palette, light/dark). |
+**Prerequisite for all notebooks:** `data/processed/` (generated by `pipeline` below).
 
 ---
 
-## What's implemented
+## Installation
 
-- **Data pipeline (raw → processed).** Full staged transform behind
-  `coupons-uplift pipeline`: parse → clean → attribution → influence-aware label →
-  leakage-free features → reward cost → executable contract + write. Output grain
-  `(account_id, offer_id, received_time)`, unique.
-- **Structural guarantees G1–G10.** Tested invariants over the real data: unique
-  grain, no temporal leakage, label independent of view, conversion within
-  validity, coherent cost, sentinel handling, exclusive exposure, minimum-spend
-  on conversion.
-- **`is_recurrent`.** A converted receipt whose customer converts again (any
-  offer) within a configurable window. Derived from the target, never a feature.
-- **EDA & segmentation.** Descriptive EDA, covariate balance (view/no-view and
-  across received offers), and K-Means segmentation with explicit geometry — all
-  figures on the single `viz.py` theme.
-- **Predictive baseline.** Logistic + LGBM conversion model with MLflow tracking
-  (`auc_lgbm=0.85 > auc_logit=0.80`).
-- **X-learner uplift.** CATE per `offer_type` with fixed propensity, plus CATE
-  uncertainty and causal feature importance.
-- **Qini/AUUC evaluation.** Ranking metrics via `sklift`, backed by a placebo
-  permutation test that confirms the signal is real, not noise.
-- **Blend scoring.** Hybrid `X-learner + λ·raw-conversion` (fixed λ) and a
-  dynamic version weighted by the X-learner's internal CATE disagreement — the
-  production `BlendedUpliftModel`.
-- **Offline evaluation.** Incremental gain curve per budget top-N: incremental
-  conversions × mean profit per treated conversion, monotone envelope, bootstrap
-  confidence intervals.
-- **Product CLI.** Model wrappers encapsulate train + predict; `cli train` fits
-  and serializes the `BlendedUpliftModel`, `cli predict` serves the top-N actions
-  (one offer per customer, top-N by budget).
+**Requirements:** [UV](https://docs.astral.sh/uv/), Python ≥ 3.12, JDK 11+ (PySpark),
+Git.
 
-**Removed by user decision** (recorded in the specs as `~~struck~~`):
-cost-sensitive policy + allocation baselines, IPW / Direct Method, magnitude
-calibration + isotonic correction, and `informational` from modeling. The
-project evaluates uplift models by Qini/AUUC and the per-budget gain curve —
-there is no longer a "decide who to send to" allocation step.
+```bash
+git clone https://github.com/caio-olubini/ifood-coupons-uplift.git
+cd ifood-coupons-uplift
+uv sync
+uv run coupons-uplift pipeline
+```
+
+Raw JSONs ship in `data/raw/`; processed Parquet is generated locally. A
+pre-trained model is already in `models/` — re-run `train` only after changing
+the pipeline or config.
 
 ---
 
-## Conventions
+## CLI
 
-- **Configurability is law**: a magic value (window, threshold, path, seed)
-  inside a function is a defect → `config.yaml`.
-- **Anti-leakage is structural**: historical features filter
-  `event_time < received_time` *before* aggregating, then re-join to the grain.
-- **Pydantic at the edges**, never row-by-row in the Spark hot path.
-- **Every rate names its denominator**: `taxa_conversao` (over received) and
-  `taxa_conversao_vistos` (over viewers) are different numbers and live side by
-  side.
-- **Balance is diagnostic, not a gate**: SMD above threshold qualifies the
-  causal reading, never changes the estimator.
-- **Spec vs. data divergence is recorded, not patched in code** — the measured
-  number goes to the notebook and the spec; code changes only by contract
-  decision.
+```bash
+uv run coupons-uplift pipeline   # raw JSONs → data/processed/
+uv run coupons-uplift train      # fit BlendedUpliftModel → models/
+uv run coupons-uplift predict --budget 5000   # top-N recommendations (one offer per customer)
+```
+
+Simulator export, config overrides, and serving options:
+[`simulator/README.md`](simulator/README.md) and [`CLAUDE.md`](CLAUDE.md).
+
+---
+
