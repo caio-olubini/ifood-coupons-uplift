@@ -1,109 +1,115 @@
 # iFood Coupons Uplift
 
-A data-driven system for **coupon allocation**: given a budget of N offers, decide
-**who to target and which offer to send** to maximize incremental profit — not just
-who is likely to convert.
+**Coupon allocation by incremental profit** — X-learner · blend · offline proof on holdout
 
-The core problem is **uplift** (incremental treatment effect), not conversion
-classification. Sending a coupon to someone who would have bought anyway burns
-margin without adding revenue. The solution estimates who the offer actually
-*moves*, ranks customers by expected incremental gain, and evaluates strategies
-offline — without a live A/B test.
+[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](https://www.python.org/)
+[![PySpark](https://img.shields.io/badge/PySpark-local-E25A1C?logo=apachespark&logoColor=white)](https://spark.apache.org/)
+[![CausalML](https://img.shields.io/badge/CausalML-X--learner-2d6a4f)](https://github.com/uber/causalml)
+[![UV](https://img.shields.io/badge/UV-package_manager-DE5FE9)](https://docs.astral.sh/uv/)
+[![Simulator](https://img.shields.io/badge/demo-live-EA1D2C?style=for-the-badge)](https://caio-olubini.github.io/ifood-coupons-uplift/)
 
-**Modeling stack:** X-learner meta-learner (CausalML) per offer type, a predictive
-conversion prior (LGBM), and a production **BlendedUpliftModel** that combines
-causal uplift with conversion probability — fixed λ blending and a dynamic variant
-weighted by CATE estimation uncertainty. Offline evaluation uses Qini/AUUC ranking
-metrics and an incremental gain curve per budget (top-N).
+## Simulator
 
-Everything runs **locally** (no cloud, no Databricks): PySpark local for data
-processing, UV for dependency management, and a static browser simulator for
-interactive exploration.
+[![Coupon Allocation Simulator](docs/assets/simulator-preview.svg)](https://caio-olubini.github.io/ifood-coupons-uplift/)
+
+**[Open the simulator →](https://caio-olubini.github.io/ifood-coupons-uplift/)** — set budget, compare strategies, export CSV · [`simulator/README.md`](simulator/README.md)
+
+---
+
+![End-to-end architecture](docs/assets/architecture.svg)
 
 ## Results (holdout)
 
-Evaluated on **20,412 holdout sends** (bogo + discount) the model never trained on.
-Production strategy: **BlendedUpliftModel** with dynamic λ (γ = 1.0) — X-learner
-uplift blended with conversion probability, weighted by CATE estimation uncertainty.
+20,412 sends · **BlendedUpliftModel** (dynamic λ, γ = 1.0) · model never trained on this split.
 
-**Incremental net profit (R$)** — same customers, same observed outcomes, different
-ranking strategies:
+![Incremental net profit by budget](docs/assets/gain-curve.svg)
 
-| Budget (top-N) | Random | Raw conversion | **Blend γ = 1.0** |
+| Budget | Random | Raw conversion | **Blend γ = 1.0** |
 |---:|---:|---:|---:|
 | 1,000 | 1,557 | **4,010** | 2,814 |
 | 5,000 | 9,667 | 10,983 | **12,036** |
 | 10,000 | 17,820 | 19,613 | **24,244** |
 | 15,000 | 25,934 | 23,929 | **32,079** |
 
-At **15,000 coupons** — a realistic campaign budget — the winning strategy delivers
-**R$ 32,079** in incremental profit: **+24% vs random** (+R$ 6,145) and **+34% vs
-ranking by raw conversion** (+R$ 8,150). Raw conversion leads only at very small
-budgets (top-1,000), where high-spend users dominate; as the list widens, uplift
-ranking stays stable and pulls ahead.
-
-Causal ranking quality (Qini / AUUC): **0.069 / 0.073** for the blend — vs 0.034 /
-0.040 for uplift alone, 0.009 / −0.006 for raw conversion, and −0.012 / −0.012
-for random. A placebo permutation test (20 runs) confirms the signal is real
-(p = 0/20).
-
----
-
-## Highlights
-
-### Coupon Allocation Simulator
-
-**Live demo:** [https://caio-olubini.github.io/ifood-coupons-uplift/](https://caio-olubini.github.io/ifood-coupons-uplift/)
-
-Interactive UI to explore allocation under a budget: who receives which offer,
-projected return, and side-by-side comparison of ranking strategies. No backend
-at runtime — scores and holdout analytics are pre-computed offline and shipped as
-JSON. See [`simulator/README.md`](simulator/README.md) for details.
-
-### Notebooks
-
-All notebooks import from `src/` and display results — no transformation logic
-lives in the notebook cells.
-
-| Notebook | What it covers |
+| Metric | Value |
 |---|---|
-| [`notebooks/1_data_processing.ipynb`](notebooks/1_data_processing.ipynb) | Step-by-step pipeline audit: each `src/` stage in sequence, intermediate state, and structural guarantees (G1–G10) on real data. |
-| [`notebooks/1_1_exploratory_analysis.ipynb`](notebooks/1_1_exploratory_analysis.ipynb) | Exploratory analysis: event timeline, data quality, distributions, correlation, response funnel, covariate balance, causal diagnostics. |
-| [`notebooks/1_2_clustering.ipynb`](notebooks/1_2_clustering.ipynb) | Customer segmentation (K-Means) → business personas; response by segment. Descriptive only — never a model feature. |
-| [`notebooks/2_modeling.ipynb`](notebooks/2_modeling.ipynb) | Full modeling run: temporal split, predictive baseline, X-learner, Qini/AUUC + placebo test, blend study, incremental gain curve by budget, quadrant analysis, feature importance. |
+| Incremental profit @ 15k | **R$ 32,079** |
+| vs random | **+24%** |
+| vs raw conversion | **+34%** |
+| Qini / AUUC | **0.069 / 0.073** |
+| Placebo test | **p = 0/20** |
 
-**Prerequisite for all notebooks:** `data/processed/` (generated by `pipeline` below).
+```mermaid
+flowchart LR
+  A[Who receives?] --> B{X-learner τ}
+  B --> C[Blend + uncertainty]
+  C --> D[Rank top-N]
+  D --> E[Incremental profit]
+  style E fill:#edf7f1,stroke:#2d6a4f
+```
 
----
+## What was built
 
-## Installation
+- [x] **Spark pipeline** — extraction, cleaning, attribution, leakage-free features, G1–G10 contract
+- [x] **EDA** — funnels, covariate balance, causal diagnostics
+- [x] **X-learner** — CATE per offer type; placebo confirms real signal
+- [x] **Uncertainty blend** — uplift + conversion prior; dynamic λ by CATE confidence
+- [x] **Exploration** — softmax temperature (CLI + simulator)
+- [x] **Holdout eval** — Qini/AUUC + incremental profit curves
+- [x] **Feature importance** — causal, predictive, combined
+- [x] **Test suite** — ~36 tests encoding structural guarantees
+- [x] **Spec-driven dev** — `specification/` reqs + acceptance criteria
+- [x] **Product** — CLI + allocation simulator
 
-**Requirements:** [UV](https://docs.astral.sh/uv/), Python ≥ 3.12, JDK 11+ (PySpark),
-Git.
+## Quick start
 
 ```bash
-git clone https://github.com/caio-olubini/ifood-coupons-uplift.git
-cd ifood-coupons-uplift
+git clone https://github.com/caio-olubini/ifood-coupons-uplift.git && cd ifood-coupons-uplift
 uv sync
 uv run coupons-uplift pipeline
+uv run coupons-uplift train
+uv run coupons-uplift predict --budget 15000 --out campanha.csv
 ```
 
-Raw JSONs ship in `data/raw/`; processed Parquet is generated locally. A
-pre-trained model is already in `models/` — re-run `train` only after changing
-the pipeline or config.
+`UV` · Python ≥ 3.12 · JDK 11+ · raw data in `data/raw/` · model in `models/`
+
+## Notebooks
+
+| Notebook | Content |
+|---|---|
+| [`1_data_processing`](notebooks/1_data_processing.ipynb) | Pipeline audit, G1–G10 |
+| [`1_1_exploratory_analysis`](notebooks/1_1_exploratory_analysis.ipynb) | EDA, funnels, balance |
+| [`1_2_clustering`](notebooks/1_2_clustering.ipynb) | Segmentation *(in progress)* |
+| [`2_modeling`](notebooks/2_modeling.ipynb) | X-learner, placebo, blends, gain curves |
+
+## Assumptions
+
+[`specification/00-clarify.md`](specification/00-clarify.md) · key points:
+
+| Topic | Choice |
+|---|---|
+| Send | RCT — propensity known |
+| Treatment | Viewed offer vs received-but-not-viewed (pseudo-control) |
+| Label | Conversion in validity window, independent of view (G3) |
+| Eval | Observed counterfactual on holdout (Qini-style) |
+
+Divergences logged: 56.7% overlapping receipts · 13.4% right-censored · 25.8% completed without view.
+
+## Limitations
+
+- Promo-window outcome only — no LTV or long-term behavior
+- Last wave censored; blend λ/γ tuned on holdout (optimistic)
+- Simulator projects from model scores, not realized counterfactuals
+- Viewing not randomized — confounding possible
+- Offline proof ≠ live A/B
+
+## Roadmap
+
+- [ ] Persona clustering + simulator filter by segment
+- [ ] MLflow tracking hardening
+- [ ] Databricks integration (deferred — local PySpark for now)
+- [ ] Hyperparameter tuning at production scale
 
 ---
 
-## CLI
-
-```bash
-uv run coupons-uplift pipeline   # raw JSONs → data/processed/
-uv run coupons-uplift train      # fit BlendedUpliftModel → models/
-uv run coupons-uplift predict --budget 5000   # top-N recommendations (one offer per customer)
-```
-
-Simulator export, config overrides, and serving options:
-[`simulator/README.md`](simulator/README.md) and [`CLAUDE.md`](CLAUDE.md).
-
----
-
+**[Simulator](https://caio-olubini.github.io/ifood-coupons-uplift/)** · [`simulator/README.md`](simulator/README.md) · [`specification/`](specification/)
