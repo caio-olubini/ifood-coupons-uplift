@@ -324,6 +324,56 @@ def dynamic_hybrid_ranking(
     ).index.to_numpy()
 
 
+def _marginal_conversions_by_decile(curva: pd.DataFrame, n: int) -> np.ndarray:
+    """Conversões incrementais marginais por decil, a partir da curva acumulada."""
+    budgets = [0] + [round(n * d / 10) for d in range(1, 11)]
+    cumulative = curva.set_index("n").loc[budgets, "conversions"].to_numpy()
+    return np.diff(cumulative)
+
+
+def incremental_conversions_by_decile(
+    ranking: np.ndarray,
+    holdout_df: pd.DataFrame,
+    cfg: PipelineConfig | None = None,
+) -> pd.DataFrame:
+    """Conversões incrementais **marginais** por decil de um ranking.
+
+    Cada decil cobre 10% do holdout na ordem do ranking (D1 = topo, D10 =
+    cauda). A métrica é a diferença do acumulado de `incremental_gain_curve`
+    entre dois cortes de budget — quantas conversões causadas pela oferta cada
+    faixa do ranking contribui, no mesmo contrafactual escalado estilo Qini de
+    `conversions`.
+
+    Com `cfg`, anexa IC bootstrap (`conversions_lo`/`conversions_hi`) por decil
+    (mesmo padrão de `gain_curves_with_ci`). Retorna `[decil, conversions]`
+    (+ IC se `cfg`).
+    """
+    holdout_with_profit = add_net_profit(holdout_df)
+    n = len(holdout_df)
+    ordered = holdout_with_profit.loc[ranking].reset_index(drop=True)
+
+    point_curve = incremental_gain_curve(np.arange(n), ordered)
+    marginals = _marginal_conversions_by_decile(point_curve, n)
+
+    out = pd.DataFrame({"decil": np.arange(1, 11), "conversions": marginals})
+
+    if cfg is None:
+        return out
+
+    alpha = 1.0 - cfg.gain_curve_confidence_level
+    rng = np.random.default_rng(cfg.seed)
+    replicas = np.empty((cfg.gain_curve_n_bootstrap, 10))
+
+    for i in range(cfg.gain_curve_n_bootstrap):
+        sample_idx = np.sort(rng.integers(0, n, size=n))
+        resampled = ordered.iloc[sample_idx].reset_index(drop=True)
+        curva = incremental_gain_curve(np.arange(len(resampled)), resampled)
+        replicas[i] = _marginal_conversions_by_decile(curva, n)
+
+    conv_lo, conv_hi = np.quantile(replicas, [alpha / 2, 1 - alpha / 2], axis=0)
+    return out.assign(conversions_lo=conv_lo, conversions_hi=conv_hi)
+
+
 def best_lambda_by_decile(
     uplift_pred: pd.Series,
     p_convert: pd.Series,

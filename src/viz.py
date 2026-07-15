@@ -1,6 +1,6 @@
 """Tema executivo único e primitivas de plot para todas as figuras (REQ-108, T-109).
 
-Um só módulo, dois níveis. **Tema** (topo): nenhuma figura define estilo ad hoc —
+Um só módulo, dois níveis. **Tema** (topo): none figura define estilo ad hoc —
 todas nascem de `figure()`, que aplica o template registrado aqui. A paleta é a
 instância de referência do método de dataviz, **validada por script** (banda de
 luminosidade OKLCH, piso de croma, separação CVD entre pares adjacentes e
@@ -271,7 +271,7 @@ def horizontal_bars(
     if log_scale:
         fig.update_xaxes(title=f"{xlabel} (escala log)")
     # ~38px por barra: confortável numa volumetria de 3–4 e sem esticar num
-    # ranking de 15 (72px/barra dava uma figura de 1200px, barras enormes).
+    # ranking from 15 (72px/barra dava uma figura from 1200px, barras enormes).
     _bar_layout(
         fig,
         categories=ordered[category].tolist(),
@@ -301,7 +301,7 @@ def vertical_bars(
 ) -> go.Figure:
     """Barras verticais de série única, com valor direto na ponta.
 
-    `xticktext` troca o rótulo do eixo x sem reordenar os dados (ex.: "onda 1
+    `xticktext` troca o rótulo do eixo x sem reordenar os dados (ex.: "wave 1
     <br>t=0"); `tickformat` (`.0%`, `.2f`) formata o eixo y; `customdata`/
     `hovertemplate` customizam o tooltip. O rótulo na barra usa `label_template`
     (`%{y:.1%}` para taxa, `%{y:,.0f}` para contagem).
@@ -446,7 +446,7 @@ def stacked_bars(
 
     `data` no formato *long* (`[category, segment, value]`); é pivotado aqui. `order`
     fixa a ordem de empilhamento e a cor de cada segmento entre figuras (ex.:
-    passar `quadrant.QUADRANT_ORDER` para que composição e receita usem a mesma cor
+    passar `quadrant.QUADRANT_ORDER` para que composição e revenue usem a mesma cor
     por quadrante). Segmentos ausentes de `order` são ignorados; presentes mas sem
     ordem entram depois, na ordem de aparição.
     """
@@ -498,7 +498,7 @@ def line_series(
     marcadores por série (ex.: eventos de campanha são disparos discretos, só a
     compra é contínua). `category_order` reindexa o eixo x categórico. `vlines`
     marca instantes (ondas, k escolhido) com linha pontilhada; `reference` desenha
-    uma reta tracejada nomeada (baseline aleatório do Qini). `ci=(lo, hi)` sombreia
+    uma reta tracejada nomeada (baseline random do Qini). `ci=(lo, hi)` sombreia
     a banda de confiança de cada série. Rótulo direto no fim de cada série
     (`end_labels`) — a cor sozinha não identifica (ver docstring do módulo).
     """
@@ -625,7 +625,7 @@ def heatmap(
     `annotate="auto"` escreve o valor em cada célula quando a matriz é pequena
     (≤ 8×8); `annotate=True/False` força. `text` sobrepõe outra matriz de valores
     para anotar (ex.: média bruta sobre o z-score). Dimensiona a figura ao número
-    de linhas/colunas e inverte o eixo y (leitura de matriz).
+    de linhas/colunas e inverte o eixo y (reading de matriz).
     """
     escala = (DIVERGING_LIGHT if theme == "light" else DIVERGING_DARK) if diverging \
         else SEQUENTIAL
@@ -815,7 +815,7 @@ def timeline_ranges(
     vline: float | None = None,
     theme: str = "light",
 ) -> go.Figure:
-    """Barras horizontais de intervalo — janela de validade e censura à direita.
+    """Barras horizontais de intervalo — janela de validade e right censoring.
 
     Cada linha desenha a parte observável em cor sólida e o trecho além do fim
     dos dados em tom mais claro. `vline` marca o instante em que a coleta termina.
@@ -833,7 +833,7 @@ def timeline_ranges(
             y=[row[label]], x=[obs_fim - ini], base=ini, orientation="h",
             marker_color=cor, marker_line_width=0, showlegend=False,
             hovertemplate=(
-                f"{row[label]}<br>observável: {ini:g}–{obs_fim:g} "
+                f"{row[label]}<br>observable: {ini:g}–{obs_fim:g} "
                 f"({obs_fim - ini:g}d)<extra></extra>"
             ),
         ))
@@ -842,23 +842,23 @@ def timeline_ranges(
                 y=[row[label]], x=[val_fim - obs_fim], base=obs_fim, orientation="h",
                 marker_color=_rgba(cor, 0.22), marker_line_width=0, showlegend=False,
                 hovertemplate=(
-                    f"{row[label]}<br>censurado: {obs_fim:g}–{val_fim:g} "
+                    f"{row[label]}<br>censored: {obs_fim:g}–{val_fim:g} "
                     f"({val_fim - obs_fim:g}d)<extra></extra>"
                 ),
             ))
 
     fig.add_trace(go.Bar(
-        x=[None], y=[None], name="janela observável",
+        x=[None], y=[None], name="observable window",
         marker_color=cores[0], orientation="h",
     ))
     fig.add_trace(go.Bar(
-        x=[None], y=[None], name="censura à direita",
+        x=[None], y=[None], name="right censoring",
         marker_color=_rgba(cores[0], 0.22), orientation="h",
     ))
     if vline is not None:
         fig.add_vline(
             x=vline, line=dict(color=muted, width=1.5, dash="dash"),
-            annotation_text=f"fim dos dados (t={vline:g})",
+            annotation_text=f"end of data (t={vline:g})",
             annotation_position="top right",
             annotation_font=dict(color=secondary, size=11),
         )

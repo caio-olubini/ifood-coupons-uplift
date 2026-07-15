@@ -43,7 +43,7 @@ Details: [`simulator/README.md`](simulator/README.md)
 - [x] **Exploration** — softmax temperature on ranking (CLI + simulator)
 - [x] **Holdout eval** — Qini/AUUC + incremental profit curves by budget
 - [x] **Feature importance** — causal, predictive, combined
-- [x] **Test suite** — ~36 tests encoding structural guarantees
+- [x] **Test suite** — 101 tests encoding structural guarantees
 - [x] **Product** — `pipeline` / `train` / `predict` CLI + allocation simulator
 
 ## Quick start
@@ -58,7 +58,9 @@ uv run coupons-uplift predict --budget 15000 --out campanha.csv
 
 Requirements: [UV](https://docs.astral.sh/uv/) · Python ≥ 3.12 · JDK 11+ · Git
 
-Raw data in `data/raw/` · processed Parquet generated locally · model in `models/`
+Raw data in `data/raw/` · processed Parquet generated locally · model in `models/` (pre-committed — `predict` works right after `uv sync`)
+
+**Fast validation** (no Spark run): `uv sync` → `uv run pytest -q` → `uv run coupons-uplift predict --budget 100 --out campanha.csv`
 
 ## Notebooks
 
@@ -152,7 +154,7 @@ uv run coupons-uplift <command> [--config path/to.yaml]
 | `--out path.csv` | stdout | Write recommendations to CSV |
 
 ```bash
-uv run pytest -q                              # full integrity suite (~36 tests)
+uv run pytest -q                              # full integrity suite (101 tests)
 uv run pytest tests/test_leakage.py -q        # single file
 ```
 
@@ -211,5 +213,5 @@ ifood-coupons-uplift/
 | `specification/` | SDD backbone — see [Specification-driven design](#specification-driven-design) |
 | `models/` | Serialized production model — boundary between `train` and `predict` |
 
-Further detail: [`CLAUDE.md`](CLAUDE.md) · [`simulator/README.md`](simulator/README.md)
+Further detail: [`specification/`](specification/) · [`simulator/README.md`](simulator/README.md)
 

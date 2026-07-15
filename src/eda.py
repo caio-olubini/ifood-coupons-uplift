@@ -54,25 +54,25 @@ def events_over_time(events: DataFrame) -> pd.DataFrame:
 # --- Visão 2: as seis ondas de campanha ----------------------------------------
 
 def campaign_waves(processed: DataFrame) -> pd.DataFrame:
-    """Recebimentos, exposição e conversão por onda de campanha."""
+    """Recebimentos, exposição e conversão por campaign wave."""
     return (
         processed.groupBy("campaign_wave", "received_time")
         .agg(
             F.count("*").alias("recebimentos"),
-            F.sum("treatment").alias("vistos"),
+            F.sum("treatment").alias("viewed"),
             F.sum("converted").alias("conversoes"),
         )
         .orderBy("campaign_wave")
         .toPandas()
-        .assign(taxa_view=lambda d: d["vistos"] / d["recebimentos"])
+        .assign(taxa_view=lambda d: d["viewed"] / d["recebimentos"])
     )
 
 
 def campaign_validity_windows(processed: DataFrame, events: DataFrame) -> tuple[pd.DataFrame, float]:
-    """Janela de validade por onda e quanto dela é observável antes do fim dos dados.
+    """Janela de validade por wave e quanto dela é observável antes do fim dos dados.
 
     `valid_until = received_time + duration`. Quando ultrapassa o último evento bruto,
-    a diferença é censura à direita — conversão e taxas das ondas tardias ficam
+    a diferença é right censoring — conversão e taxas das ondas tardias ficam
     subestimadas por construção, não por fadiga do cliente.
     """
     fim = float(events.agg(F.max("time").alias("fim")).first()["fim"])
@@ -90,7 +90,7 @@ def campaign_validity_windows(processed: DataFrame, events: DataFrame) -> tuple[
     ondas["censurada"] = ondas["valid_until"] > fim
     ondas["dias_censurados"] = (ondas["valid_until"] - fim).clip(lower=0)
     ondas["rotulo"] = ondas.apply(
-        lambda r: f"onda {int(r.campaign_wave)} · t={r.received_time:g} · {r.duration:g}d",
+        lambda r: f"wave {int(r.campaign_wave)} · t={r.received_time:g} · {r.duration:g}d",
         axis=1,
     )
     ondas["recebimentos_censurados"] = np.where(ondas["censurada"], ondas["recebimentos"], 0)
@@ -107,11 +107,11 @@ def completed_unseen_by_type(events: DataFrame, offers: DataFrame) -> pd.DataFra
     """
     completados = events.filter(F.col("event") == "offer completed").select(
         "account_id", F.col("offer_ref").alias("offer_id"), F.col("time").alias("completed_time"))
-    vistos = events.filter(F.col("event") == "offer viewed").select(
+    viewed = events.filter(F.col("event") == "offer viewed").select(
         "account_id", F.col("offer_ref").alias("offer_id"), F.col("time").alias("view_time"))
 
     pares = (
-        completados.join(vistos, on=["account_id", "offer_id"], how="left")
+        completados.join(viewed, on=["account_id", "offer_id"], how="left")
         .groupBy("account_id", "offer_id", "completed_time")
         .agg(F.max((F.col("view_time") <= F.col("completed_time")).cast("int")).alias("teve_view"))
     )
@@ -144,7 +144,7 @@ def identity_null_overlap(raw_profile: DataFrame, cfg: PipelineConfig) -> pd.Dat
         F.sum(sentinela.cast("int")).alias(f"age={cfg.age_sentinel}"),
         F.sum(sem_genero.cast("int")).alias("gender nulo"),
         F.sum(sem_limite.cast("int")).alias("credit_card_limit nulo"),
-        F.sum((sentinela & sem_genero & sem_limite).cast("int")).alias("os três, juntos"),
+        F.sum((sentinela & sem_genero & sem_limite).cast("int")).alias("all three, together"),
         F.sum((sentinela | sem_genero | sem_limite).cast("int")).alias("ao menos um"),
     ).first().asDict()
 
@@ -154,7 +154,7 @@ def identity_null_overlap(raw_profile: DataFrame, cfg: PipelineConfig) -> pd.Dat
     ).assign(total_clientes=total)
 
 
-# --- Ato 3: compra fora de qualquer janela de oferta ---------------------------
+# --- Ato 3: compra outside any offer window ---------------------------
 
 def unattributable_transaction_share(events: DataFrame, attributed: DataFrame) -> pd.DataFrame:
     """Fração das transações que não cai em NENHUMA janela de recebimento.
@@ -178,7 +178,7 @@ def unattributable_transaction_share(events: DataFrame, attributed: DataFrame) -
     )
     fora = total - em_alguma_janela
     return pd.DataFrame([
-        {"grupo": "fora de qualquer janela de oferta", "transacoes": fora, "fracao": fora / total},
+        {"grupo": "outside any offer window", "transacoes": fora, "fracao": fora / total},
         {"grupo": "dentro de alguma janela", "transacoes": em_alguma_janela, "fracao": em_alguma_janela / total},
     ])
 
@@ -216,9 +216,9 @@ def conversion_by_type_and_segment(processed: DataFrame, profile: DataFrame, cfg
 
     Três taxas, com denominadores explícitos porque é onde uma EDA mente sem
     querer: `taxa_conversao` divide por **recebimentos** (mistura quem nem viu),
-    `taxa_view` isola a exposição, e `taxa_conversao_vistos` divide por **vistos**
+    `taxa_view` isola a exposição, e `taxa_conversao_viewed` divide por **viewed**
     — a única que fala de resposta ao estímulo. Vale a identidade
-    `taxa_conversao = taxa_view × taxa_conversao_vistos` (G3: converter exige ver).
+    `taxa_conversao = taxa_view × taxa_conversao_viewed` (G3: converter exige ver).
     """
     q1, q2, q3 = profile.approxQuantile("tenure_days", [0.25, 0.5, 0.75], cfg.quantile_rel_error)
     faixa = (
@@ -233,7 +233,7 @@ def conversion_by_type_and_segment(processed: DataFrame, profile: DataFrame, cfg
         .groupBy("offer_type", "tenure_q")
         .agg(
             F.count("*").alias("n"),
-            F.sum("treatment").alias("vistos"),
+            F.sum("treatment").alias("viewed"),
             F.sum("converted").alias("conversoes"),
             F.avg("converted").alias("taxa_conversao"),
         )
@@ -241,9 +241,9 @@ def conversion_by_type_and_segment(processed: DataFrame, profile: DataFrame, cfg
         .sort_values(["offer_type", "tenure_q"])
         .reset_index(drop=True)
     )
-    frame["taxa_view"] = frame["vistos"] / frame["n"]
-    frame["taxa_conversao_vistos"] = np.where(
-        frame["vistos"] > 0, frame["conversoes"] / frame["vistos"], np.nan)
+    frame["taxa_view"] = frame["viewed"] / frame["n"]
+    frame["taxa_conversao_viewed"] = np.where(
+        frame["viewed"] > 0, frame["conversoes"] / frame["viewed"], np.nan)
     return frame
 
 
@@ -293,11 +293,11 @@ def covariate_balance(processed: DataFrame, cfg: PipelineConfig, group_col: str 
     e aparece por conta própria em `identity_missing`).
 
     Com `group_col="treatment"` (default) compara quem **viu** a oferta contra quem
-    não viu — o pedido do REQ-109. Note que ver é comportamento **pós-tratamento**:
+    did not view — o pedido do REQ-109. Note que ver é comportamento **pós-tratamento**:
     balanço aqui é tranquilizador, mas não é o que verifica a Premissa 4 (a
     aleatorização do *envio*). Para isso, ver `assignment_balance`.
 
-    Diagnóstico, não gate: acima do limiar a leitura causal fica qualificada, o
+    Diagnóstico, não gate: acima do limiar a reading causal fica qualificada, o
     estimador não muda (Premissas 4 e 5).
     """
     preparado, colunas_genero = _with_gender_indicators(processed)
@@ -367,25 +367,25 @@ def assignment_balance(processed: DataFrame, cfg: PipelineConfig) -> pd.DataFram
 
 
 def treatment_group_comparison(processed: DataFrame) -> pd.DataFrame:
-    """Taxa de conversão e ticket médio entre viu (`treatment=1`) e não viu (`treatment=0`).
+    """Taxa de conversão e ticket médio entre viu (`treatment=1`) e did not view (`treatment=0`).
 
     Leitura bruta, não causal: `treatment` é pós-tratamento (o cliente escolheu ver),
     então a diferença aqui mistura efeito real com o mesmo confundimento que
-    `covariate_balance` qualifica. Complementa o balanço de covariáveis com a métrica
+    `covariate_balance` qualifica. Complementa o balanço de covariáveis com a metric
     de resposta que ele não mostra — o "quanto" ao lado do "os grupos são comparáveis".
     """
     frame = (
         processed.groupBy("treatment")
         .agg(
-            F.count("*").alias("recebidos"),
+            F.count("*").alias("received"),
             F.avg("converted").alias("taxa_conversao"),
             F.avg(F.when(F.col("converted") == 1, F.col("conversion_value"))).alias("ticket_medio"),
-            F.avg("conversion_value").alias("receita_media"),
+            F.avg("conversion_value").alias("revenue_media"),
         )
         .orderBy("treatment")
         .toPandas()
     )
-    frame["treatment"] = frame["treatment"].map({0: "não viu", 1: "viu"})
+    frame["treatment"] = frame["treatment"].map({0: "did not view", 1: "viewed"})
     return frame
 
 
@@ -503,29 +503,29 @@ def sanity_checks(processed: DataFrame) -> pd.DataFrame:
     Não substitui `0_pipeline_audit.ipynb` (que faz `assert`): aqui as mesmas
     condições viram números numa tabela, para que a EDA leia o dado com os olhos
     abertos em vez de assumir a auditoria de cor. Zero em todas as linhas é o
-    resultado esperado; qualquer coisa diferente é achado de EDA, não de estilo.
+    resultado esperado; qualquer coisa diferente é finding de EDA, não de estilo.
     """
     condicoes = {
-        # `converted=1` com `treatment=0` é ESPERADO: quem não viu a oferta e
-        # comprou na validade converteu. É a massa que dá μ₀ > 0 e torna o
+        # `converted=1` com `treatment=0` é ESPERADO: quem did not view a oferta e
+        # comprou na validade converted. É a massa que dá μ₀ > 0 e torna o
         # uplift estimável — checar o contrário zeraria o contrafactual.
         "converted=1 com conversion_value = 0":
             (F.col("converted") == 1) & (F.col("conversion_value") <= 0),
         "conversion_value > 0 sem converted":
             (F.col("conversion_value") > 0) & (F.col("converted") == 0),
-        "reward_cost > 0 sem conversão (viola G6)":
+        "reward_cost > 0 without conversion (violates G6)":
             (F.col("reward_cost") > 0) & (F.col("converted") == 0),
         "reward_cost > 0 em informational (viola G6)":
             (F.col("reward_cost") > 0) & (F.col("offer_type") == "informational"),
-        "reward_cost acima da receita da conversão":
+        "reward_cost acima da revenue da conversão":
             (F.col("converted") == 1) & (F.col("reward_cost") > F.col("conversion_value")),
-        "ticket médio histórico sem transação histórica":
+        "historical average ticket without historical transaction":
             (F.col("hist_avg_ticket") > 0) & (F.col("hist_txn_count") == 0),
-        "gasto histórico negativo":
+        "negative historical spend":
             F.col("hist_spend_total") < 0,
-        "taxa de view histórica fora de [0,1]":
+        "historical view rate outside [0,1]":
             (F.col("hist_view_rate") < 0) | (F.col("hist_view_rate") > 1),
-        "idade igual à sentinela (viola G7)":
+        "age equals sentinel (violates G7)":
             F.col("age") == 118,
     }
     total = processed.count()
@@ -533,7 +533,7 @@ def sanity_checks(processed: DataFrame) -> pd.DataFrame:
         F.sum(c.cast("long")).alias(nome) for nome, c in condicoes.items()
     ]).first().asDict()
     return pd.DataFrame([
-        {"verificação": nome, "linhas": int(v or 0), "fracao": (v or 0) / total}
+        {"check": nome, "linhas": int(v or 0), "fracao": (v or 0) / total}
         for nome, v in linha.items()
     ])
 
@@ -543,72 +543,72 @@ def sanity_checks(processed: DataFrame) -> pd.DataFrame:
 def response_funnel(processed: DataFrame) -> pd.DataFrame:
     """Recebido → visto → convertido → recorrente, por tipo de oferta.
 
-    `taxa_conversao` (sobre recebidos) e `taxa_conversao_vistos` (sobre vistos) medem
+    `taxa_conversao` (sobre received) e `taxa_conversao_viewed` (sobre viewed) medem
     coisas diferentes: a primeira é a performance da campanha como enviada, a segunda
-    é a resposta de quem foi de fato exposto. Confundir as duas infla a leitura de
+    é a resposta de quem foi de fato exposto. Confundir as duas infla a reading de
     qualquer tipo com baixa taxa de view.
 
     Recorrência: `is_recurrent=1` só em `converted=1` — outra compra na janela configurada
-    após a conversão. `taxa_recorrencia` divide por recebidos; `taxa_recorrencia_convertidos`
-    divide por convertidos (denominador correto para recompra entre quem comprou).
+    após a conversão. `taxa_recorrencia` divide por received; `taxa_recorrencia_converted`
+    divide por converted (denominador correto para recompra entre quem comprou).
     """
     frame = (
         processed.groupBy("offer_type")
         .agg(
-            F.count("*").alias("recebidos"),
-            F.sum("treatment").alias("vistos"),
-            F.sum("converted").alias("convertidos"),
+            F.count("*").alias("received"),
+            F.sum("treatment").alias("viewed"),
+            F.sum("converted").alias("converted"),
             F.sum("is_recurrent").alias("recorrentes"),
-            F.sum("conversion_value").alias("receita"),
-            F.sum("reward_cost").alias("custo"),
+            F.sum("conversion_value").alias("revenue"),
+            F.sum("reward_cost").alias("cost"),
         )
         .orderBy("offer_type")
         .toPandas()
     )
-    frame["taxa_view"] = frame["vistos"] / frame["recebidos"]
-    frame["taxa_conversao"] = frame["convertidos"] / frame["recebidos"]
-    frame["taxa_conversao_vistos"] = np.where(
-        frame["vistos"] > 0, frame["convertidos"] / frame["vistos"], np.nan)
-    frame["taxa_recorrencia"] = frame["recorrentes"] / frame["recebidos"]
-    frame["taxa_recorrencia_convertidos"] = np.where(
-        frame["convertidos"] > 0, frame["recorrentes"] / frame["convertidos"], np.nan)
-    frame["margem_por_envio"] = (frame["receita"] - frame["custo"]) / frame["recebidos"]
+    frame["taxa_view"] = frame["viewed"] / frame["received"]
+    frame["taxa_conversao"] = frame["converted"] / frame["received"]
+    frame["taxa_conversao_viewed"] = np.where(
+        frame["viewed"] > 0, frame["converted"] / frame["viewed"], np.nan)
+    frame["taxa_recorrencia"] = frame["recorrentes"] / frame["received"]
+    frame["taxa_recorrencia_converted"] = np.where(
+        frame["converted"] > 0, frame["recorrentes"] / frame["converted"], np.nan)
+    frame["margem_por_envio"] = (frame["revenue"] - frame["cost"]) / frame["received"]
     return frame
 
 
 def recurrence_by_wave(processed: DataFrame) -> pd.DataFrame:
-    """Recorrência de recompra por onda de campanha, com denominadores explícitos."""
+    """Recorrência de recompra por campaign wave, com denominadores explícitos."""
     return (
         processed.groupBy("campaign_wave")
         .agg(
-            F.count("*").alias("recebidos"),
-            F.sum("converted").alias("convertidos"),
+            F.count("*").alias("received"),
+            F.sum("converted").alias("converted"),
             F.sum("is_recurrent").alias("recorrentes"),
         )
         .orderBy("campaign_wave")
         .toPandas()
         .assign(
-            taxa_recorrencia=lambda d: d["recorrentes"] / d["recebidos"],
-            taxa_recorrencia_convertidos=lambda d: np.where(
-                d["convertidos"] > 0, d["recorrentes"] / d["convertidos"], np.nan),
+            taxa_recorrencia=lambda d: d["recorrentes"] / d["received"],
+            taxa_recorrencia_converted=lambda d: np.where(
+                d["converted"] > 0, d["recorrentes"] / d["converted"], np.nan),
         )
     )
 
 
 def recurrence_by_treatment(processed: DataFrame) -> pd.DataFrame:
-    """Recorrência por tipo de oferta × braço (viu/não viu)."""
+    """Recorrência por tipo de oferta × braço (viu/did not view)."""
     return (
         processed.groupBy("offer_type", "treatment")
         .agg(
-            F.count("*").alias("recebidos"),
-            F.sum("converted").alias("convertidos"),
+            F.count("*").alias("received"),
+            F.sum("converted").alias("converted"),
             F.sum("is_recurrent").alias("recorrentes"),
         )
         .toPandas()
         .assign(
-            taxa_recorrencia=lambda d: d["recorrentes"] / d["recebidos"],
-            taxa_recorrencia_convertidos=lambda d: np.where(
-                d["convertidos"] > 0, d["recorrentes"] / d["convertidos"], np.nan),
+            taxa_recorrencia=lambda d: d["recorrentes"] / d["received"],
+            taxa_recorrencia_converted=lambda d: np.where(
+                d["converted"] > 0, d["recorrentes"] / d["converted"], np.nan),
         )
         .sort_values(["offer_type", "treatment"])
         .reset_index(drop=True)
@@ -628,7 +628,7 @@ CLUSTER_FEATURES = ("age", "credit_card_limit", "tenure_days",
 # os maiores gastadores. `log1p` (e não `log`) porque zero é frequente e legítimo.
 LOG_FEATURES = ("spend_total", "txn_count", "avg_ticket")
 
-MISSING_IDENTITY_SEGMENT = "identidade ausente"
+MISSING_IDENTITY_SEGMENT = "missing identity"
 
 
 def client_features(processed: DataFrame, events: DataFrame) -> pd.DataFrame:
@@ -674,7 +674,7 @@ def client_features(processed: DataFrame, events: DataFrame) -> pd.DataFrame:
 
 
 def cluster_matrix(clients: pd.DataFrame) -> tuple[np.ndarray, pd.Index, list[str]]:
-    """Matriz padronizada para o K-Means, só com clientes de perfil completo.
+    """Matriz padronizada para o K-Means, só com costmers with complete profile.
 
     Três decisões que fazem a distância euclidiana significar alguma coisa:
 
@@ -682,7 +682,7 @@ def cluster_matrix(clients: pd.DataFrame) -> tuple[np.ndarray, pd.Index, list[st
        `credit_card_limit` (Premissa 3). Imputar a mediana os empurraria para o
        centro do espaço — inventaria clientes medianos e ainda contaria a mesma
        ausência três vezes (age, limite e a flag). Eles já **são** um segmento;
-       ficam fora do ajuste e entram na leitura como segmento nomeado.
+       ficam fora do ajuste e entram na reading como segmento nomeado.
     2. **`log1p` nas caudas** (`LOG_FEATURES`): K-Means minimiza soma de quadrados,
        logo um gastador extremo puxa o centróide sozinho.
     3. **z-score depois do log**: a distância euclidiana soma diferenças ao quadrado
@@ -717,7 +717,7 @@ def cluster_scan(matrix: np.ndarray, cfg: PipelineConfig) -> pd.DataFrame:
     """Varre `k` em `[cluster_k_min, cluster_k_max]`: inércia (cotovelo) e silhouette.
 
     A silhouette é medida na **mesma matriz padronizada** que alimenta o ajuste e com
-    a mesma métrica (euclidiana) — avaliar no espaço bruto compararia um agrupamento
+    a mesma metric (euclidiana) — avaliar no espaço bruto compararia um agrupamento
     com uma geometria que ele nunca viu. É O(n²), daí a amostra de
     `cfg.cluster_silhouette_sample` linhas, fixada por `cfg.seed`.
     """
@@ -772,7 +772,7 @@ def segment_response(processed: DataFrame, segments: DataFrame) -> pd.DataFrame:
     """Resposta observada por segmento × tipo de oferta.
 
     Denominadores explícitos (mesma disciplina de `response_funnel`) e economia por
-    envio: `margem_por_envio = (receita − custo) / envios` é a grandeza que a política
+    envio: `margem_por_envio = (revenue − cost) / envios` é a grandeza que a política
     da spec 02 vai maximizar, aqui na sua versão **observacional** — média do que
     aconteceu, não o efeito causal de enviar.
     """
@@ -781,20 +781,20 @@ def segment_response(processed: DataFrame, segments: DataFrame) -> pd.DataFrame:
         .groupBy("segmento", "offer_type")
         .agg(
             F.count("*").alias("envios"),
-            F.sum("treatment").alias("vistos"),
+            F.sum("treatment").alias("viewed"),
             F.sum("converted").alias("conversoes"),
-            F.sum("conversion_value").alias("receita"),
-            F.sum("reward_cost").alias("custo"),
+            F.sum("conversion_value").alias("revenue"),
+            F.sum("reward_cost").alias("cost"),
         )
         .toPandas()
         .sort_values(["segmento", "offer_type"])
         .reset_index(drop=True)
     )
-    frame["taxa_view"] = frame["vistos"] / frame["envios"]
+    frame["taxa_view"] = frame["viewed"] / frame["envios"]
     frame["taxa_conversao"] = frame["conversoes"] / frame["envios"]
-    frame["taxa_conversao_vistos"] = np.where(
-        frame["vistos"] > 0, frame["conversoes"] / frame["vistos"], np.nan)
-    frame["margem_por_envio"] = (frame["receita"] - frame["custo"]) / frame["envios"]
+    frame["taxa_conversao_viewed"] = np.where(
+        frame["viewed"] > 0, frame["conversoes"] / frame["viewed"], np.nan)
+    frame["margem_por_envio"] = (frame["revenue"] - frame["cost"]) / frame["envios"]
     return frame
 
 
@@ -825,7 +825,7 @@ def window_spend(attributed: DataFrame, events: DataFrame) -> DataFrame:
 
 
 def naive_spend_lift(processed: DataFrame, window: DataFrame, segments: DataFrame) -> pd.DataFrame:
-    """Diferença bruta de gasto na janela entre quem viu e quem não viu, por segmento.
+    """Diferença bruta de gasto na janela entre quem viu e quem did not view, por segmento.
 
     **Não é uplift.** Ver é escolha do cliente (pós-tratamento): quem abre a oferta
     tende a ser quem já estava mais ativo, e essa seleção entra inteira na diferença.
@@ -847,24 +847,24 @@ def naive_spend_lift(processed: DataFrame, window: DataFrame, segments: DataFram
         "segmento": frame.index,
         "gasto_visto": frame[("gasto_medio", 1)].to_numpy(),
         "gasto_nao_visto": frame[("gasto_medio", 0)].to_numpy(),
-        "envios_vistos": frame[("envios", 1)].to_numpy(),
-        "envios_nao_vistos": frame[("envios", 0)].to_numpy(),
+        "envios_viewed": frame[("envios", 1)].to_numpy(),
+        "envios_nao_viewed": frame[("envios", 0)].to_numpy(),
     })
     saida["diferenca_bruta"] = saida["gasto_visto"] - saida["gasto_nao_visto"]
     return saida.sort_values("diferenca_bruta", ascending=False).reset_index(drop=True)
 
 
 def paid_below_minimum(processed: DataFrame) -> pd.DataFrame:
-    """Verifica G10 sobre o dado real: nenhuma conversão paga fica abaixo do `min_value`.
+    """Verifica G10 sobre o dado real: none conversão paga fica abaixo do `min_value`.
 
     Enquanto a atribuição aceitava qualquer transação pós-view na janela, o label
-    (G4) e o custo (REQ-106) discordavam: uma compra abaixo do gasto mínimo virava
+    (G4) e o cost (REQ-106) discordavam: uma compra abaixo do gasto mínimo virava
     conversão e debitava um desconto que nunca teria sido concedido — inflando o
-    custo do lado errado da função de lucro. G10 fechou essa fenda na atribuição.
+    cost do lado errado da função de lucro. G10 fechou essa fenda na atribuição.
 
-    A função sobrevive como **auditoria**, não como achado: `abaixo_do_minimo` e
-    `custo_sob_suspeita` devem ser zero em toda linha. Qualquer valor positivo é
-    regressão de G10. `custo_acima_da_receita` continua podendo ser não-zero — um
+    A função sobrevive como **auditoria**, não como finding: `abaixo_do_minimo` e
+    `cost_sob_suspeita` devem ser zero em toda linha. Qualquer valor positivo é
+    regressão de G10. `cost_acima_da_revenue` continua podendo ser não-zero — um
     desconto de R$ 10 numa compra de R$ 10 é legítimo e não viola nada.
     """
     pagas = processed.filter((F.col("converted") == 1) & (F.col("offer_type") != "informational"))
@@ -873,14 +873,14 @@ def paid_below_minimum(processed: DataFrame) -> pd.DataFrame:
         .agg(
             F.count("*").alias("conversoes_pagas"),
             F.sum((F.col("conversion_value") < F.col("min_value")).cast("long")).alias("abaixo_do_minimo"),
-            F.sum((F.col("reward_cost") > F.col("conversion_value")).cast("long")).alias("custo_acima_da_receita"),
-            F.sum(F.col("reward_cost")).alias("custo_total"),
+            F.sum((F.col("reward_cost") > F.col("conversion_value")).cast("long")).alias("cost_acima_da_revenue"),
+            F.sum(F.col("reward_cost")).alias("cost_total"),
             F.sum(F.when(F.col("conversion_value") < F.col("min_value"), F.col("reward_cost"))
-                  .otherwise(F.lit(0.0))).alias("custo_sob_suspeita"),
+                  .otherwise(F.lit(0.0))).alias("cost_sob_suspeita"),
         )
         .orderBy("offer_type")
         .toPandas()
     )
     frame["frac_abaixo_do_minimo"] = frame["abaixo_do_minimo"] / frame["conversoes_pagas"]
-    frame["frac_custo_sob_suspeita"] = frame["custo_sob_suspeita"] / frame["custo_total"]
+    frame["frac_cost_sob_suspeita"] = frame["cost_sob_suspeita"] / frame["cost_total"]
     return frame

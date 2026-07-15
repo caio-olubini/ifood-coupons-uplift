@@ -120,7 +120,7 @@ def scan_k(matrix: np.ndarray, cfg: PipelineConfig) -> pd.DataFrame:
 
     Estende `eda.cluster_scan` (inércia + silhouette) com Davies-Bouldin (↓) e
     Calinski-Harabasz (↑), para a escolha de `k` não depender de um critério só.
-    Todos na mesma matriz padronizada do ajuste, com a métrica euclidiana e a
+    Todos na mesma matriz padronizada do ajuste, com a metric euclidiana e a
     `cfg.seed`; silhouette amostrada (O(n²)), DB/CH na matriz inteira (O(n)).
     """
     from sklearn.cluster import KMeans
@@ -152,10 +152,10 @@ def name_personas(profile: pd.DataFrame) -> pd.DataFrame:
     """Mapeia cada segmento a um rótulo de negócio, derivado do perfil.
 
     Os rótulos do K-Means (`cluster 0/1/…`) são arbitrários (dependem da
-    inicialização). Regra: o segmento sentinela é sempre "Sem cadastro completo".
+    inicialização). Regra: o segmento sentinela é sempre "Incomplete registration".
     Entre os clusters ajustados, ordena por `spend_total` (valor econômico
-    realizado) e nomeia por posição — o de maior gasto vira "Alto valor", o de
-    menor "Baixo ticket"; intermediários levam "Valor intermediário" numerado.
+    realizado) e nomeia por posição — o de maior gasto vira "High value", o de
+    menor "Low ticket"; intermediários levam "Mid value" numerado.
     Devolve `profile` com uma coluna `persona`. Reprodutível apesar da numeração.
     """
     ajustados = profile.loc[profile["segmento"] != MISSING_IDENTITY_SEGMENT]
@@ -167,13 +167,13 @@ def name_personas(profile: pd.DataFrame) -> pd.DataFrame:
         if n == 1:
             rotulo = "Base"
         elif pos == 0:
-            rotulo = "Alto valor"
+            rotulo = "High value"
         elif pos == n - 1:
-            rotulo = "Baixo ticket"
+            rotulo = "Low ticket"
         else:
-            rotulo = f"Valor intermediário {pos}"
+            rotulo = f"Mid value {pos}"
         nomes[seg] = rotulo
-    nomes[MISSING_IDENTITY_SEGMENT] = "Sem cadastro completo"
+    nomes[MISSING_IDENTITY_SEGMENT] = "Incomplete registration"
 
     saida = profile.copy()
     saida["persona"] = saida["segmento"].map(nomes)

@@ -131,7 +131,7 @@ def predict(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.DataFrame
 
 
 def predict_stages(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.DataFrame:
-    """μ₀, μ₁ e τ previstos **por linha** (não agregados), no grão do contrato.
+    """μ₀, μ₁ e τ previewed **por linha** (não agregados), no grão do contrato.
 
     Mesmo cálculo de `stage_diagnostics`, mas devolvendo a estimativa individual
     em vez da média por `offer_type` — é o que a classificação de quadrante
@@ -166,7 +166,7 @@ def predict_cate_uncertainty(models: dict[str, BaseXRegressor], df: pd.DataFrame
     Onde os dois discordam, o efeito é menos identificado: `|dhat_t − dhat_c|`
     é uma medida honesta de **incerteza da própria estimativa**, não do tamanho
     do efeito (o que `|mu1 − mu0|` mediria). `predict(..., return_components=True)`
-    devolve os dois componentes sem custo extra de ajuste.
+    devolve os dois componentes sem cost extra de ajuste.
 
     Retorna `[account_id, offer_id, received_time, offer_type, uncertainty]` na
     ordem de linha de `df` — a mesma convenção de `predict`.
@@ -245,7 +245,7 @@ def label_by_arm(df: pd.DataFrame) -> pd.DataFrame:
     """Estrutura do outcome dentro de cada braço, por `offer_type`.
 
     Se `taxa_outcome` no controle for exatamente 0, μ₀ ≡ 0 e o "uplift" degenera
-    em μ₁ — o modelo devolve a taxa de conversão dos tratados, não um efeito.
+    em μ₁ — o modelo devolve a conversion rate dos tratados, não um efeito.
     """
     linhas = []
     for offer_type, group in df.groupby(OFFER_TYPE_COLUMN):
@@ -253,7 +253,7 @@ def label_by_arm(df: pd.DataFrame) -> pd.DataFrame:
             braco = group[group[TREATMENT_COLUMN] == arm]
             linhas.append({
                 "offer_type": offer_type,
-                "braco": "controle (não viu)" if arm == 0 else "tratado (viu)",
+                "braco": "control (did not view)" if arm == 0 else "treated (viewed)",
                 "n": len(braco),
                 "outcome_positivo": int(braco[OUTCOME_COLUMN].sum()),
                 "taxa_outcome": braco[OUTCOME_COLUMN].mean() if len(braco) else float("nan"),
@@ -262,7 +262,7 @@ def label_by_arm(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def stage_diagnostics(models: dict[str, BaseXRegressor], df: pd.DataFrame) -> pd.DataFrame:
-    """μ₀, μ₁ e τ previstos em `df`, por `offer_type` — os estágios do X-learner.
+    """μ₀, μ₁ e τ previewed em `df`, por `offer_type` — os estágios do X-learner.
 
     `mu0_*` vem de `model_mu_c` (ajustado só no controle) e `mu1_*` de
     `models_mu_t` (só no tratado). `tau_medio` é o uplift final. A identidade
