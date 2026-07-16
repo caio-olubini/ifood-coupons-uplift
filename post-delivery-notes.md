@@ -67,3 +67,75 @@ antes: `fixed_propensity`, `model.fit(..., p=p)`). Neste regime —
 o ganho teórico de estimar `g(x)` com precisão **não paga o custo de variância**
 que a precisão introduz. Fica documentado como **divergência testada, não decisão
 arbitrária**.
+
+---
+
+## Meta-learner benchmark: the S-learner wins, and it is not a disguised conversion model (2026-07-16)
+
+**Notebook:** [`notebooks/appendix/model_benchmarking.ipynb`](notebooks/appendix/model_benchmarking.ipynb)
+
+### Context
+
+With the delivery deadline pushed by a week, the extra time went into
+benchmarking alternatives to the **X-learner** — the original production choice,
+justified a priori by the arm imbalance — on an exploratory branch. All learners
+share the **same** base learner (the config's LGBM), the **same** fixed
+propensity and the **same** temporal split, so the comparison isolates the
+*meta-learner*, not the base learner.
+
+### The benchmark (Qini/AUUC, holdout)
+
+| strategy | Qini | AUUC | placebo p |
+|---|---|---|---|
+| **S-learner** | **0,0897** [0,078; 0,101] | **0,1074** | 0,0 |
+| T-learner | 0,0419 [0,029; 0,055] | 0,0499 | 0,0 |
+| CausalForest | 0,0401 [0,028; 0,053] | 0,0456 | 0,2 |
+| X-learner (produção) | 0,0335 [0,019; 0,047] | 0,0403 | 0,0 |
+
+The S-learner wins by a wide margin — its CI **does not overlap** any of the
+other three. CausalForest is the only case where the placebo nearly fails
+(p=0,2), which is reassuring in itself: **the test discriminates.**
+
+### Why the number was not trusted on sight — three robustness checks
+
+1. **The estimated CATE is genuinely heterogeneous**, not a constant dressed up
+   as conversion. τ̂ has std (0,071) **larger** than its mean (0,058), is skewed,
+   and carries a negative tail consistent with the ~27% of **sleeping dogs**
+   already mapped in the case.
+2. **Correlation with the propensity score is moderate, not high.** Pearson 0,37
+   / Spearman 0,40 — this **rejects** the "S-learner = disguised conversion
+   model" hypothesis, which would predict 0,8+.
+3. **The `treatment` marginal importance is low (3%, isolated)** — expected, and
+   *not* in contradiction with the two checks above: the effect is captured
+   through **interaction** with `hist_avg_ticket` and `tenure_days` (the two
+   dominant features), not as a direct additive shift.
+
+### Mechanistic explanation for the win
+
+The coupon effect here is **small and concentrated in a few strong variables** —
+not diffuse and complex. T/X/CausalForest estimate the effect as the *difference
+between two separately trained models*, and that subtraction **adds up the error
+of both**; with a small signal, the summed noise overwhelms it. The S-learner
+trains everything jointly and does not pay that variance toll — a more stable
+result in exactly this regime of subtle effect plus arm imbalance.
+
+### Explicit limit of what was tested
+
+The three checks and the placebo rule out **noise, leakage and the trivial
+disguised-propensity explanation**. **None of them addresses confounding**: every
+estimator runs on the same observational holdout, under the same non-randomized
+view. The causal question stays **open**, and only the randomized A/B already
+proposed in the case settles it.
+
+### Scope decision
+
+Deliberate stop after this investigation. **Not** tested: other base learners
+inside the S-learner (explicit interactions, XGBoost) and other meta-learners
+(DR-learner). Judged as **diminishing marginal return** against this phase's
+objective.
+
+### Status
+
+Finding registered as a **post-delivery exploration candidate**. The delivered
+case's production model **remains the X-learner**, with its original rationale
+preserved.
