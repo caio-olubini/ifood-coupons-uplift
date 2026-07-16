@@ -389,6 +389,52 @@ def treatment_group_comparison(processed: DataFrame) -> pd.DataFrame:
     return frame
 
 
+def _bootstrap_mean_ci(
+    values: np.ndarray,
+    cfg: PipelineConfig,
+    rng: np.random.Generator,
+) -> tuple[float, float, float]:
+    """Média amostral e IC percentil por bootstrap não paramétrico."""
+    if len(values) == 0:
+        return np.nan, np.nan, np.nan
+    mean = float(np.mean(values))
+    alpha = 1.0 - cfg.gain_curve_confidence_level
+    replicas = np.empty(cfg.gain_curve_n_bootstrap)
+    for i in range(cfg.gain_curve_n_bootstrap):
+        replicas[i] = np.mean(rng.choice(values, size=len(values), replace=True))
+    lo, hi = np.quantile(replicas, [alpha / 2, 1 - alpha / 2])
+    return mean, float(lo), float(hi)
+
+
+def conversion_group_ticket(
+    processed: DataFrame,
+    cfg: PipelineConfig,
+    *,
+    column: str = "conversion_value",
+) -> pd.DataFrame:
+    """Média de `column` por status de conversão, com IC bootstrap.
+
+    Com `conversion_value` (default), a média no grupo não-convertido é receita por
+    envio (sempre zero); no convertido, ticket da compra na validade. Com
+    `hist_avg_ticket`, compara o hábito de gasto pré-oferta. O IC reusa
+    `gain_curve_n_bootstrap` e `gain_curve_confidence_level`.
+    """
+    frame = processed.select("converted", column).toPandas()
+    rng = np.random.default_rng(cfg.seed)
+    linhas = []
+    for converted, grupo in ((0, "did not convert"), (1, "converted")):
+        valores = frame.loc[frame["converted"] == converted, column].to_numpy(dtype="float64")
+        media, lo, hi = _bootstrap_mean_ci(valores, cfg, rng)
+        linhas.append({
+            "grupo": grupo,
+            "received": len(valores),
+            "ticket_medio": media,
+            "ticket_lo": lo,
+            "ticket_hi": hi,
+        })
+    return pd.DataFrame(linhas)
+
+
 # --- Perfil univariado das features (REQ-108) ----------------------------------
 
 def numeric_profile(df: DataFrame, columns: list[str], cfg: PipelineConfig) -> pd.DataFrame:
@@ -573,6 +619,50 @@ def response_funnel(processed: DataFrame) -> pd.DataFrame:
     frame["taxa_recorrencia_converted"] = np.where(
         frame["converted"] > 0, frame["recorrentes"] / frame["converted"], np.nan)
     frame["margem_por_envio"] = (frame["revenue"] - frame["cost"]) / frame["received"]
+    return frame
+
+
+def discount_margin_ratio_by_offer_type(processed: DataFrame) -> pd.DataFrame:
+    """Desconto sobre margem líquida por tipo — só `converted=1`.
+
+    `desconto_sobre_margem` = `reward_cost / (conversion_value − reward_cost)`.
+    Mede quanto de desconto a oferta exige por real de margem — o múltiplo que o
+  uplift incremental precisa cobrir para breakeven.
+
+    `desconto_sobre_margem_media`: média linha a linha (margem > 0).
+    `desconto_sobre_margem_ponderada`: `sum(cost) / sum(margin)` no tipo.
+    """
+    margem = F.col("conversion_value") - F.col("reward_cost")
+    ratio = F.col("reward_cost") / margem
+    conversoes = processed.filter(F.col("converted") == 1)
+    com_margem = conversoes.filter(margem > 0)
+
+    frame = (
+        conversoes.groupBy("offer_type")
+        .agg(
+            F.count("*").alias("conversoes"),
+            F.sum("conversion_value").alias("revenue"),
+            F.sum("reward_cost").alias("cost"),
+            F.avg("conversion_value").alias("valor_medio"),
+            F.avg("reward_cost").alias("custo_medio"),
+        )
+        .orderBy("offer_type")
+        .toPandas()
+    )
+    stats = (
+        com_margem.groupBy("offer_type")
+        .agg(
+            F.avg(ratio).alias("desconto_sobre_margem_media"),
+            F.expr(
+                "percentile_approx(reward_cost / (conversion_value - reward_cost), 0.5)"
+            ).alias("desconto_sobre_margem_mediana"),
+        )
+        .toPandas()
+    )
+    frame = frame.merge(stats, on="offer_type", how="left")
+    frame["margem_media"] = frame["valor_medio"] - frame["custo_medio"]
+    frame["margem_total"] = frame["revenue"] - frame["cost"]
+    frame["desconto_sobre_margem_ponderada"] = frame["cost"] / frame["margem_total"]
     return frame
 
 

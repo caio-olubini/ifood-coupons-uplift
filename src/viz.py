@@ -328,6 +328,64 @@ def vertical_bars(
     return fig
 
 
+def vertical_bars_ci(
+    data: pd.DataFrame,
+    *,
+    category: str,
+    value: str,
+    value_lo: str,
+    value_hi: str,
+    title: str,
+    subtitle: str | None = None,
+    ylabel: str = "Valor",
+    label_template: str = "R$ %{y:,.0f}",
+    tickformat: str | None = None,
+    theme: str = "light",
+) -> go.Figure:
+    """Barras verticais com intervalo de confiança assimétrico (`value_lo`/`value_hi`)."""
+    cores = palette(theme)
+    _, secondary, _ = ink(theme)
+
+    fig = figure(title, subtitle, theme=theme)
+    fig.add_trace(go.Bar(
+        x=data[category],
+        y=data[value],
+        marker_color=[cores[i % len(cores)] for i in range(len(data))],
+        marker_line_width=0,
+        error_y=dict(
+            type="data",
+            symmetric=False,
+            array=(data[value_hi] - data[value]).to_numpy(),
+            arrayminus=(data[value] - data[value_lo]).to_numpy(),
+            color=secondary,
+            thickness=1.5,
+            width=6,
+        ),
+        text=data[value],
+        texttemplate=label_template,
+        textposition="outside",
+        cliponaxis=False,
+        textfont=dict(color=secondary, size=11),
+        hovertemplate=(
+            "%{x}<br>R$ %{y:,.2f}<br>IC [%{customdata[0]:,.2f}, %{customdata[1]:,.2f}]"
+            "<extra></extra>"
+        ),
+        customdata=np.column_stack([data[value_lo], data[value_hi]]),
+    ))
+    fig.update_layout(yaxis_title=ylabel, showlegend=False)
+    if tickformat is not None:
+        fig.update_layout(yaxis_tickformat=tickformat)
+    ymax = float(data[value_hi].max()) if len(data) else None
+    _bar_layout(
+        fig,
+        categories=data[category].tolist(),
+        horizontal=False,
+        height=400,
+        value_max=ymax,
+    )
+    return fig
+
+
 def vertical_share_bars(
     data: pd.DataFrame,
     *,
@@ -772,7 +830,7 @@ def faceted(
                 x=vx, line=dict(color=ink(theme)[2], width=1, dash="dot"),
                 row=r, col=c,
             )
-        if not shared_yaxes and p["y"]:
+        if not shared_yaxes and len(p["y"]) > 0:
             topo = max(p["y"]) * (1 + y_pad)
             eixo_y = {"range": [0, topo]}
             if y_tickformat is not None:
