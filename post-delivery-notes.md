@@ -105,19 +105,31 @@ other three. CausalForest is the only case where the placebo nearly fails
 2. **Correlation with the propensity score is moderate, not high.** Pearson 0,37
    / Spearman 0,40 — this **rejects** the "S-learner = disguised conversion
    model" hypothesis, which would predict 0,8+.
-3. **The `treatment` marginal importance is low (3%, isolated)** — expected, and
-   *not* in contradiction with the two checks above: the effect is captured
-   through **interaction** with `hist_avg_ticket` and `tenure_days` (the two
-   dominant features), not as a direct additive shift.
+3. **The `treatment` importance is low (3%) — and that is exactly what it should
+   be.** The temptation is to read a small number as a broken model. It is the
+   opposite: the base model is, by construction, trying to **predict conversion**,
+   and the expected effect of a coupon on conversion is **conceptually small**.
+   What determines the outcome is overwhelmingly `credit_card_limit` and
+   `tenure_days` — who the customer *is* — not whether a coupon was seen. The
+   real data says so directly: control converts **33,0%** against 49,2% in the
+   treated arm, i.e. **~2/3 of all conversion happens with no treatment at all**.
+   A `treatment` importance anywhere near the top would mean the model had
+   confused the lever with the customer. At 3% it is small **but not negligible**,
+   which is precisely the weight an **uplift lever** should carry: it does not
+   explain who converts, it explains **who is moved**.
 
 ### Mechanistic explanation for the win
 
-The coupon effect here is **small and concentrated in a few strong variables** —
-not diffuse and complex. T/X/CausalForest estimate the effect as the *difference
-between two separately trained models*, and that subtraction **adds up the error
-of both**; with a small signal, the summed noise overwhelms it. The S-learner
-trains everything jointly and does not pay that variance toll — a more stable
-result in exactly this regime of subtle effect plus arm imbalance.
+This follows from the same logic as check 3. The coupon effect is **small and
+sits on top of a strong, well-behaved outcome signal** (`credit_card_limit`,
+`tenure_days`) — it is not a diffuse, complex effect spread across many
+variables. T/X/CausalForest estimate the effect as the *difference between two
+separately trained models*, and that subtraction **adds up the error of both**;
+when the signal is this small relative to the outcome, the summed noise
+overwhelms it. The S-learner trains everything jointly, lets the shared outcome
+structure be learned **once**, and reads the effect off a single model — no
+variance toll. That is the right trade in exactly this regime: **subtle effect,
+dominant outcome signal, imbalanced arms.**
 
 ### Explicit limit of what was tested
 
