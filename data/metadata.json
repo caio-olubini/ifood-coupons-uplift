@@ -1,0 +1,108 @@
+{
+  "decision_time": 29.75,
+  "n_clients": 17000,
+  "n_rows": 170000,
+  "n_holdout_rows": 20412,
+  "seed": 42,
+  "default_budget": 1000,
+  "temperature_default": 0.0,
+  "temperature_max": 1.0,
+  "modeled_offer_types": [
+    "bogo",
+    "discount"
+  ],
+  "lucro_medio_por_conversao_tratada": 15.844676534175953,
+  "receita_media_por_conversao_tratada": 20.937641776151672,
+  "analytics_budgets": [
+    1000,
+    5000,
+    10000,
+    15000
+  ],
+  "quadrant_order": [
+    "persuadable",
+    "sure_thing",
+    "lost_cause",
+    "sleeping_dog"
+  ],
+  "strategies": {
+    "aleatorio": {
+      "label": "Distribuir ao acaso",
+      "help": "Manda cupom para quem calhar — o ponto de partida para comparar."
+    },
+    "conversao": {
+      "label": "Priorizar conversão",
+      "help": "Prioriza quem tem mais chance de comprar — mas parte talvez comprasse sem o cupom."
+    },
+    "uplift": {
+      "label": "Priorizar uplift",
+      "help": "Prioriza quem compra por causa do cupom — o efeito real da oferta."
+    }
+  },
+  "quadrants": {
+    "persuadable": {
+      "label": "Persuadables",
+      "help": "Quem o cupom convence a comprar."
+    },
+    "sure_thing": {
+      "label": "Sure things",
+      "help": "Quem já compra de qualquer jeito."
+    },
+    "lost_cause": {
+      "label": "Lost causes",
+      "help": "Quem dificilmente converte."
+    },
+    "sleeping_dog": {
+      "label": "Sleeping dogs",
+      "help": "Quem o cupom atrapalha — melhor não enviar."
+    }
+  },
+  "projection_disclaimer": "Projeção (efeito esperado × médias do histórico) — lucro líquido e receita bruta por conversão.",
+  "analytics_disclaimer": "Ganho medido no histórico de validação — o que já aconteceu nos dados, não uma previsão para frente.",
+  "glossary": [
+    {
+      "term": "Estratégia",
+      "definition": "A regra que define em que ordem os clientes são priorizados para receber cupom."
+    },
+    {
+      "term": "Enviados",
+      "definition": "Quantos clientes recebem cupom no orçamento escolhido — um cupom por cliente."
+    },
+    {
+      "term": "Conversões esperadas",
+      "definition": "Quantas compras o modelo prevê no total, somando a chance de conversão de cada cliente escolhido. Nem toda compra prevista acontece por causa do cupom."
+    },
+    {
+      "term": "Receita bruta esperada",
+      "definition": "Valor total de compra previsto antes do desconto, calculado a partir das conversões esperadas e do ticket médio histórico."
+    },
+    {
+      "term": "Conversões incrementais",
+      "definition": "Compras que só acontecem por causa do cupom — o efeito causal da oferta, não quem já compraria de qualquer jeito."
+    },
+    {
+      "term": "Lucro projetado",
+      "definition": "Ganho líquido incremental estimado: conversões incrementais multiplicadas pelo lucro médio por conversão no histórico."
+    },
+    {
+      "term": "Desconto esperado",
+      "definition": "Custo previsto em cupons: para cada cliente, chance de conversão vezes o valor do desconto da oferta escolhida."
+    },
+    {
+      "term": "Quadrantes",
+      "definition": "Tipos de cliente segundo a resposta ao cupom: persuadables (convencem a comprar), sure things (já compram), lost causes (dificilmente convertem) e sleeping dogs (o cupom atrapalha)."
+    },
+    {
+      "term": "Orçamento",
+      "definition": "Quantos cupons você pretende enviar nesta campanha."
+    },
+    {
+      "term": "Exploração",
+      "definition": "Mistura um pouco de acaso na ordem de prioridade — disponível apenas em Priorizar uplift, para não ficar preso nos mesmos clientes."
+    },
+    {
+      "term": "Projeção vs. comparativo",
+      "definition": "A projeção estima o retorno para frente da campanha escolhida; o comparativo roda as três estratégias com os mesmos filtros para ver qual rende mais naquela configuração."
+    }
+  ]
+}
