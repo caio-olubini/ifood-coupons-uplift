@@ -486,6 +486,11 @@
           <p class="hint">Composição do top-N por tipo de cliente — cada barra soma 100%.</p>
           <div id="share-chart"></div>
         </div>
+        <div class="chart-block">
+          <h3>Cupom escolhido por estratégia</h3>
+          <p class="hint">Mesmo público, mas cada estratégia escolhe uma oferta por cliente — por isso as métricas divergem mesmo no orçamento máximo.</p>
+          <div id="offer-mix-chart"></div>
+        </div>
       </div>
       <p class="disclaimer" id="analytics-disclaimer"></p>
     </section>
@@ -598,8 +603,17 @@
       return (h >>> 0) / 4294967296;
     }
 
+    function isModeledType(offerType) {
+      return state.metadata.modeled_offer_types.includes(offerType);
+    }
+
     function rowMatrixScore(strategyKey, i) {
       const m = state.matrix;
+      // As três estratégias operam sobre o MESMO universo de oferta (bogo/discount):
+      // informational não é pontuável pelo modelo, então o sorteio do aleatório também
+      // o ignora — do contrário o baseline mandaria panfleto (contribuição zero) e
+      // ficaria artificialmente rebaixado na comparação.
+      if (!isModeledType(m.offer_type[i])) return null;
       if (strategyKey === "aleatorio") {
         return hashScore(m.account_id[i], m.offer_id[i], state.metadata.seed);
       }
@@ -693,6 +707,7 @@
       for (const q of quadOrder) {
         byQuadrant[q] = { lucro: 0, clientes: 0 };
       }
+      const byOfferType = {};
 
       for (const row of chosen) {
         const i = row.idx;
@@ -705,6 +720,9 @@
           byQuadrant[q].lucro += contribTau * lucroMedio;
           byQuadrant[q].clientes += 1;
         }
+
+        const ot = m.offer_type[i];
+        byOfferType[ot] = (byOfferType[ot] || 0) + 1;
 
         const p = m.p_convert[i];
         if (p !== null) {
@@ -720,6 +738,7 @@
         lucro: tauSum * lucroMedio,
         discountBudget,
         byQuadrant,
+        byOfferType,
       };
     }
 
@@ -874,6 +893,37 @@
       document.getElementById("analytics-body").innerHTML = body;
       renderCompareChart(allRuns);
       renderShareChart(allRuns);
+      renderOfferMixChart(allRuns);
+    }
+
+    const OFFER_TYPE_CHART_COLORS = { bogo: "#EA1D2C", discount: "#F5A623" };
+
+    function renderOfferMixChart(allRuns) {
+      const stratLabels = STRATEGY_KEYS.map((k) => strategies()[k].label);
+      const types = state.metadata.modeled_offer_types;
+
+      const totals = STRATEGY_KEYS.map((k) => {
+        const byOt = allRuns[k].projection.byOfferType || {};
+        return types.reduce((sum, t) => sum + (byOt[t] || 0), 0);
+      });
+
+      const traces = types.map((t) => ({
+        type: "bar",
+        name: OFFER_TYPE_LABELS[t] || t,
+        x: stratLabels,
+        y: STRATEGY_KEYS.map((k, si) => {
+          const n = (allRuns[k].projection.byOfferType || {})[t] || 0;
+          return totals[si] > 0 ? (n / totals[si]) * 100 : 0;
+        }),
+        customdata: STRATEGY_KEYS.map((k) => (allRuns[k].projection.byOfferType || {})[t] || 0),
+        marker: { color: OFFER_TYPE_CHART_COLORS[t] || "#B0B0B0" },
+        hovertemplate:
+          "%{fullData.name}<br>%{x}<br>%{y:.1f}% (%{customdata} clientes)<extra></extra>",
+      }));
+
+      const layout = chartBaseLayout(stratLabels, "Share (%)", [0, 100]);
+      layout.yaxis.ticksuffix = "%";
+      Plotly.newPlot("offer-mix-chart", traces, layout, { responsive: true, displayModeBar: false });
     }
 
     function renderCompareChart(allRuns) {
@@ -940,9 +990,9 @@
         return;
       }
 
-      if (strategyKey !== "aleatorio" && allowed.has("informational")) {
+      if (allowed.has("informational")) {
         messages.push(
-          "“Só aviso (sem desconto)” fica fora desta estratégia — disponível apenas em Distribuir ao acaso."
+          "“Só aviso (sem desconto)” não é pontuado pelo modelo e fica fora das três estratégias — todas comparam sobre o mesmo universo de cupom (compre e ganhe / desconto)."
         );
       }
       showNotice(messages);
